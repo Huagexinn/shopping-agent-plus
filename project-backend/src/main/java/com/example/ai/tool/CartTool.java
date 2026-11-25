@@ -57,9 +57,11 @@ public class CartTool {
         }
     }
 
+
     private CartToolResult executeWrite(Long userId, NormalizedRequest request) {
         try {
             CartResponse cart;
+
             switch (request.operation()) {
                 case "add" -> {
                     AddCartItemRequest addRequest = new AddCartItemRequest();
@@ -70,19 +72,40 @@ public class CartTool {
                 case "update" -> {
                     UpdateCartItemRequest updateRequest = new UpdateCartItemRequest();
                     updateRequest.setQuantity(request.quantity());
-                    cart = cartService.updateItem(userId, request.productId(), updateRequest);
+                    cart = cartService.updateItem(
+                            userId,
+                            request.productId(),
+                            updateRequest
+                    );
                 }
-                case "remove" -> cart = cartService.removeItem(userId, request.productId());
+                case "remove" ->
+                        cart = cartService.removeItem(userId, request.productId());
+
                 default -> throw new BusinessException("不支持的购物车操作");
             }
-            return success(request.operation(), operationMessage(request.operation()), cart, request.productId());
+
+            return success(
+                    request.operation(),
+                    operationMessage(request.operation()),
+                    cart,
+                    request.productId()
+            );
+
         } catch (BusinessException exception) {
-            return new CartToolResult(TOOL_NAME, false, request.operation(), exception.getMessage(), null,
-                    request.productId());
-        } catch (RuntimeException exception) {
-            return failure(request.operation(), exception, request.productId());
+
+            // 业务失败不持久化操作记录
+            // 外层幂等服务会触发事务回滚
+            return new CartToolResult(
+                    TOOL_NAME,
+                    false,
+                    request.operation(),
+                    exception.getMessage(),
+                    null,
+                    request.productId()
+            );
         }
     }
+
 
     private CartToolResult failure(String operation, RuntimeException exception) {
         return failure(operation, exception, null);

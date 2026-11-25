@@ -2,15 +2,17 @@ springdoc:
   paths-to-match: /api/**
   swagger-ui:
     operations-sorter: alpha
+server:
+  port: 8090
 spring:
   application:
     name: shopping-agent-ai
   profiles:
     default: dev
   datasource:
-    url: jdbc:mysql://localhost:3306/shopping_mall
-    username: root
-    password: 123456
+    url: ${DB_URL:jdbc:mysql://localhost:3306/shopping_mall}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   flyway:
     enabled: true
@@ -22,19 +24,19 @@ spring:
       api-key: ${DEEPSEEK_API_KEY:}
       base-url: https://api.deepseek.com
       chat:
-        model: deepseek-v4-flash
+        model: deepseek-flash
         temperature: 0.2
       embedding:
         api-key: ${QWEN_EMBEDDING_API_KEY:}
-        base-url: https://ws-xppsn0j6du7g1eu4.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        base-url: https://ws-eka0wztbt64w6gst.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
         model: qwen3.7-text-embedding
     vectorstore:
       milvus:
         client:
-          host: "localhost"
-          port: 19530
-          username: "root"
-          password: "milvus"
+          host: ${MILVUS_HOST:localhost}
+          port: ${MILVUS_PORT:19530}
+          username: ${MILVUS_USERNAME:root}
+          password: ${MILVUS_PASSWORD}
         database-name: "default"
         collection-name: "phone_knowledge_1024"
         embedding-dimension: 1024
@@ -42,7 +44,7 @@ spring:
         metric-type: COSINE
   security:
     jwt:
-      key: 'abcdefghijklmn'
+      key: ${JWT_SECRET}
       expire: 72
       limit:
         base: 10

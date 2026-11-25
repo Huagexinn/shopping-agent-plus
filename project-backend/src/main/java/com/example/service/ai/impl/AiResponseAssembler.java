@@ -34,8 +34,52 @@ public class AiResponseAssembler {
                 references.addAll(buildReferences(result.products(), result.toolName()));
             }
         }
-        Map<Long, AiReferenceResponse> distinctReferences = new LinkedHashMap<>();
-        references.forEach(reference -> distinctReferences.putIfAbsent(reference.productId(), reference));
+        Map<Long, AiReferenceResponse> distinctReferences =
+                new LinkedHashMap<>();
+
+        for (AiReferenceResponse reference : references) {
+
+            Long productId = reference.productId();
+
+            AiReferenceResponse existing =
+                    distinctReferences.get(productId);
+
+            // 第一次出现，直接保存
+            if (existing == null) {
+                distinctReferences.put(productId, reference);
+                continue;
+            }
+
+            // 合并多个 Tool 的事实
+            List<String> mergedFacts = new ArrayList<>(
+                    existing.facts()
+            );
+
+            for (String fact : reference.facts()) {
+                if (!mergedFacts.contains(fact)) {
+                    mergedFacts.add(fact);
+                }
+            }
+
+            // 合并证据来源
+            String mergedSource = existing.source();
+
+            if (!mergedSource.contains(reference.source())) {
+                mergedSource += "," + reference.source();
+            }
+
+            // 保留已有商品信息，合并事实
+            AiReferenceResponse merged = new AiReferenceResponse(
+                    productId,
+                    existing.title() != null
+                            ? existing.title()
+                            : reference.title(),
+                    mergedSource,
+                    mergedFacts
+            );
+
+            distinctReferences.put(productId, merged);
+        }
         OrderDraftResponse draft = audit.orderDraft();
         String status = draft == null ? null : STATUS_CONFIRM_REQUIRED;
         return new AiChatResponse(resultStatus, request.getConversationId(),
@@ -66,7 +110,9 @@ public class AiResponseAssembler {
     private List<AiReferenceResponse> buildReferences(List<ReadOnlyProductSnapshot> snapshots, String source) {
         Map<Long, AiReferenceResponse> references = new LinkedHashMap<>();
         for (ReadOnlyProductSnapshot snapshot : snapshots) {
-            if (snapshot.productId() == null || !snapshot.onSale() || references.containsKey(snapshot.productId())) {
+            if (snapshot.productId() == null
+                    || !snapshot.matched()
+                    || references.containsKey(snapshot.productId())) {
                 continue;
             }
             references.put(snapshot.productId(), new AiReferenceResponse(

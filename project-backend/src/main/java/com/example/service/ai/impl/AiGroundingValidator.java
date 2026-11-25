@@ -1,5 +1,4 @@
 package com.example.service.ai.impl;
-
 import com.example.ai.model.response.CartToolResult;
 import com.example.ai.model.response.OrderQueryToolResult;
 import com.example.ai.model.response.ReadOnlyProductSnapshot;
@@ -14,8 +13,11 @@ import com.example.dto.order.Response.OrderResponse;
 import com.example.dto.order.Response.OrderSummaryResponse;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -31,8 +33,10 @@ final class AiGroundingValidator {
                     + "([\\d,]{1,12}(?:\\.\\d{1,2})?)\\s*(?:元)?");
     private static final Pattern STOCK_NUMBER_PATTERN = Pattern.compile(
             "库存\\s*(?:为|有|剩余|约)?\\s*(\\d+)\\s*(?:件|台)?");
+
     private static final Pattern STOCK_ASSERTION_PATTERN = Pattern.compile(
-            "(?:当前|现在)?(?:有货|现货|缺货|无货|已售罄|可直接购买)|库存\\s*(?:充足|不足|足够|为|有|剩余|已售罄)");
+            "(?:当前|现在)?(?:有货|现货|缺货|无货|已售罄|已经售罄|可直接购买)"
+                    + "|库存\\s*(?:充足|不足|足够|为|有|剩余|已售罄)");
     private static final Pattern RAG_PRICE_PATTERN = Pattern.compile("价格=([\\d,]{1,12}(?:\\.\\d{1,2})?)");
     private static final Pattern RAG_STOCK_PATTERN = Pattern.compile("库存=([\\d]{1,12})");
     private static final Pattern PROMOTION_CLAIM_PATTERN = Pattern.compile(
@@ -76,6 +80,10 @@ final class AiGroundingValidator {
         if (containsUnknownProductId(normalizedMessage, evidence.productIds())) {
             return GroundingDecision.reject("UNVERIFIED_PRODUCT");
         }
+        // 对明确关联商品 ID 的报价、库存进行商品级核对，避免不同商品之间串用事实。
+        if (containsConflictingProductFacts(normalizedMessage, knowledgeReferences)) {
+            return GroundingDecision.reject("CONFLICTING_PRODUCT_FACT");
+        }
         if (containsUnverifiedAmount(normalizedMessage, userMessage, evidence.amounts())) {
             return GroundingDecision.reject("UNVERIFIED_AMOUNT");
         }
@@ -101,6 +109,77 @@ final class AiGroundingValidator {
         }
         return false;
     }
+
+    /** 仅对明确写出商品 ID 的语句使用 product_mysql 的商品级事实；不推测代词所属商品。 */
+    private static boolean containsConflictingProductFacts(String message,
+                                                            List<KnowledgeReference> references) {
+        if (references == null || references.isEmpty()) {
+            return false;
+        }
+        Map<Long, ProductFact> facts = new HashMap<>();
+        for (KnowledgeReference reference : references) {
+            if (reference == null || reference.productId() == null
+                    || !"product_mysql".equals(reference.sourceType())) {
+                continue;
+            }
+            String content = reference.content() == null ? "" : reference.content();
+            Matcher priceMatcher = RAG_PRICE_PATTERN.matcher(content);
+            Matcher stockMatcher = RAG_STOCK_PATTERN.matcher(content);
+            BigDecimal price = priceMatcher.find() ? parseAmount(priceMatcher.group(1)) : null;
+            Integer stock = null;
+            if (stockMatcher.find()) {
+                try {
+                    stock = Integer.valueOf(stockMatcher.group(1));
+                } catch (NumberFormatException ignored) {
+                    // 无效库存不能作为可信依据。
+                }
+            }
+            facts.put(reference.productId(), new ProductFact(price, stock));
+        }
+        Matcher idMatcher = PRODUCT_ID_PATTERN.matcher(message);
+        List<ProductMention> mentions = new ArrayList<>();
+        while (idMatcher.find()) {
+            try {
+                mentions.add(new ProductMention(Long.parseLong(idMatcher.group(1)),
+                        idMatcher.start(), idMatcher.end()));
+            } catch (NumberFormatException ignored) {
+                return true;
+            }
+        }
+        for (int i = 0; i < mentions.size(); i++) {
+            ProductMention mention = mentions.get(i);
+            ProductFact fact = facts.get(mention.productId());
+            if (fact == null) {
+                continue;
+            }
+            int end = i + 1 < mentions.size() ? mentions.get(i + 1).start() : message.length();
+            String claim = message.substring(mention.end(), end);
+            Matcher priceMatcher = MONEY_PATTERN.matcher(claim);
+            while (priceMatcher.find()) {
+                BigDecimal statedPrice = parseAmount(priceMatcher.group(1));
+                if (statedPrice == null || fact.price() == null
+                        || statedPrice.compareTo(fact.price()) != 0) {
+                    return true;
+                }
+            }
+            Matcher stockMatcher = STOCK_NUMBER_PATTERN.matcher(claim);
+            while (stockMatcher.find()) {
+                try {
+                    int statedStock = Integer.parseInt(stockMatcher.group(1));
+                    if (fact.stock() == null || statedStock != fact.stock()) {
+                        return true;
+                    }
+                } catch (NumberFormatException ignored) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private record ProductMention(Long productId, int start, int end) {}
+
+    private record ProductFact(BigDecimal price, Integer stock) {}
 
     private static boolean containsUnverifiedAmount(String message, String userMessage, Set<BigDecimal> amounts) {
         Set<BigDecimal> userAmounts = extractAmounts(userMessage);
@@ -206,6 +285,10 @@ final class AiGroundingValidator {
                         }
                     }
                 } else if (result instanceof CartToolResult cart && cart.success()) {
+                    // 记录本次购物车操作涉及的商品ID
+                    if (cart.changedProductId() != null) {
+                        productIds.add(cart.changedProductId());
+                    }
                     CartResponse cartResponse = cart.cart();
                     if (cartResponse != null) {
                         addAmount(amounts, cartResponse.displayTotalAmount());

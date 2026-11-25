@@ -1,6 +1,25 @@
+# 环境变量
 .env
 .env.*
 !.env.example
+
+# Docker 本地配置
 docker-compose.override.yml
+
+# IDEA 配置
+.idea/
+
+# 本地敏感配置
+**/application-local.yml
+**/application-local.yaml
+
+# Maven 编译文件
 **/target/
+
+# 日志
 **/logs/
+*.log
+
+# Node.js
+**/node_modules/
+**/dist/

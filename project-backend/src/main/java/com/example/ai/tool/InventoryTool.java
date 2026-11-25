@@ -15,76 +15,179 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 读取指定商品的实时库存与上架状态。 */
+/**
+ * 读取指定商品的实时库存与上架状态。
+ */
 @Service
 public class InventoryTool {
+
     @Resource
     private ProductService productService;
 
     @Transactional(readOnly = true)
     public ReadOnlyToolResult inventory(InventoryToolRequest request) {
+
         InventoryToolRequest normalized = normalize(request);
+
         List<ReadOnlyProductSnapshot> products = new ArrayList<>();
-        List<Long> matchedProductIds = new ArrayList<>();
+        List<Long> foundProductIds = new ArrayList<>();
+
+        // 判断所有商品的库存及上架信息是否完整
+        boolean allFactsComplete = true;
+
         for (Long productId : normalized.productIds()) {
+
             ProductEntity product = productService.findById(productId);
+
+            // 商品不存在
             if (product == null) {
-                products.add(ReadOnlyToolSupport.missing(productId, "商品不存在或已删除"));
+                products.add(ReadOnlyToolSupport.missing(
+                        productId, "商品不存在或已删除"
+                ));
+                allFactsComplete = false;
                 continue;
             }
-            boolean onSale = ReadOnlyToolSupport.isOnSale(product.getStatus());
-            boolean stockEnough = ReadOnlyToolSupport.hasStock(product.getStock(), normalized.requiredQuantity());
+
+            // 商品存在，记录商品ID，不受库存影响
+            foundProductIds.add(product.getId());
+
+            Integer status = product.getStatus();
+            Integer stock = product.getStock();
+
+            // 判断商品状态
+            boolean onSale = ReadOnlyToolSupport.isOnSale(status);
+
+            // 判断库存是否充足
+            boolean stockKnown = stock != null;
+            boolean stockEnough = ReadOnlyToolSupport.hasStock(
+                    stock, normalized.requiredQuantity()
+            );
+
+            // 是否满足购买条件
             boolean available = onSale && stockEnough;
+
             List<String> matchedFacts = new ArrayList<>();
             List<String> missingFacts = new ArrayList<>();
-            ReadOnlyToolSupport.appendConditionFact(matchedFacts, missingFacts, onSale, "商品当前在售", "商品已下架");
-            ReadOnlyToolSupport.appendConditionFact(matchedFacts, missingFacts, stockEnough, "库存满足需求", "库存不足");
+
+            // 记录真实的商品上架状态
+            if (status == null) {
+                missingFacts.add("商品上架状态未录入");
+            } else {
+                matchedFacts.add(
+                        onSale ? "商品当前在售" : "商品当前已下架"
+                );
+            }
+
+            // 记录真实库存事实
+            if (!stockKnown) {
+                missingFacts.add("库存信息未录入");
+            } else {
+                matchedFacts.add("当前库存 " + stock + " 件");
+                matchedFacts.add(
+                        stockEnough ? "库存满足需求" : "库存不足"
+                );
+            }
+
+            // 只有真实数据缺失才标记为信息不完整
+            if (status == null || stock == null) {
+                allFactsComplete = false;
+            }
+
+            // 构建商品状态说明
+            String reason;
+
+            if (status == null && stock == null) {
+                reason = "商品上架状态及库存信息缺失";
+            } else if (status == null) {
+                reason = "商品上架状态缺失";
+            } else if (!onSale && stock == null) {
+                reason = "商品已下架，库存信息缺失";
+            } else if (!onSale) {
+                reason = "商品已下架";
+            } else if (stock == null) {
+                reason = "库存信息缺失";
+            } else if (!stockEnough) {
+                reason = "库存不足";
+            } else {
+                reason = "库存满足需求";
+            }
+
             products.add(ReadOnlyToolSupport.from(
                     product,
-                    available,
-                    available,
+                    true,                       // 商品已成功匹配
+                    available,                  // 是否满足购买条件
                     normalized.requiredQuantity(),
                     null,
-                    available ? "库存满足需求" : "库存不足",
+                    reason,
                     matchedFacts,
-                    missingFacts));
-            if (available) {
-                matchedProductIds.add(product.getId());
-            }
+                    missingFacts
+            ));
         }
-        boolean anyExistingProduct = products.stream().anyMatch(product -> product.status() != null);
-        boolean allAvailable = anyExistingProduct && products.stream().allMatch(ReadOnlyProductSnapshot::available);
-        ReadOnlyToolResultStatus resultStatus = !anyExistingProduct
-                ? ReadOnlyToolResultStatus.BUSINESS_FAILURE
-                : allAvailable
-                ? ReadOnlyToolResultStatus.SUCCESS
-                : ReadOnlyToolResultStatus.PARTIAL_SUCCESS;
-        String message = resultStatus == ReadOnlyToolResultStatus.SUCCESS
-                ? "找到 " + matchedProductIds.size() + " 个库存可用商品"
-                : "当前没有库存可用的商品";
-        if (resultStatus == ReadOnlyToolResultStatus.PARTIAL_SUCCESS) {
-            message = matchedProductIds.isEmpty()
-                    ? "商品存在，但当前无可用库存或部分商品不可售"
-                    : "找到 " + matchedProductIds.size() + " 个库存可用商品，其他商品当前不可用";
+
+        // 统计查询结果
+        boolean allProductsFound =
+                foundProductIds.size() == normalized.productIds().size();
+
+        ReadOnlyToolResultStatus resultStatus;
+
+        if (foundProductIds.isEmpty()) {
+            resultStatus = ReadOnlyToolResultStatus.BUSINESS_FAILURE;
+        } else if (!allProductsFound || !allFactsComplete) {
+            resultStatus = ReadOnlyToolResultStatus.PARTIAL_SUCCESS;
+        } else {
+            resultStatus = ReadOnlyToolResultStatus.SUCCESS;
         }
-        return ReadOnlyToolSupport.result("InventoryTool", resultStatus, message, products, matchedProductIds, products.size());
+
+        String message;
+
+        if (resultStatus == ReadOnlyToolResultStatus.SUCCESS) {
+            message = "成功查询 " + foundProductIds.size() + " 个商品的库存信息";
+        } else if (resultStatus == ReadOnlyToolResultStatus.PARTIAL_SUCCESS) {
+            message = "查询到 " + foundProductIds.size()
+                    + " 个商品，但部分商品不存在或库存、上架信息不完整";
+        } else {
+            message = "未查询到有效商品";
+        }
+
+        return ReadOnlyToolSupport.result(
+                "InventoryTool",
+                resultStatus,
+                message,
+                products,
+                foundProductIds,
+                foundProductIds.size()
+        );
     }
 
     private InventoryToolRequest normalize(InventoryToolRequest request) {
+
         if (request == null) {
             throw new BusinessException("库存查询参数不能为空");
         }
-        List<Long> productIds = ReadOnlyToolSupport.normalizeProductIds(request.productIds(), ReadOnlyToolSupport.MAX_PRODUCT_IDS, "商品ID列表");
+
+        List<Long> productIds = ReadOnlyToolSupport.normalizeProductIds(
+                request.productIds(),
+                ReadOnlyToolSupport.MAX_PRODUCT_IDS,
+                "商品ID列表"
+        );
+
         Integer requiredQuantity = request.requiredQuantity();
+
         if (requiredQuantity == null) {
             requiredQuantity = 1;
         }
+
         if (requiredQuantity < 1) {
             throw new BusinessException("需求数量必须大于0");
         }
+
         if (requiredQuantity > ReadOnlyToolSupport.MAX_REQUIRED_QUANTITY) {
-            throw new BusinessException("需求数量不能超过" + ReadOnlyToolSupport.MAX_REQUIRED_QUANTITY);
+            throw new BusinessException(
+                    "需求数量不能超过"
+                            + ReadOnlyToolSupport.MAX_REQUIRED_QUANTITY
+            );
         }
+
         return new InventoryToolRequest(productIds, requiredQuantity);
     }
 }
