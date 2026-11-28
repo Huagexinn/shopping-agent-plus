@@ -1,0 +1,257 @@
+{
+  "verificationDate": "2026-11-26",
+  "timezone": "Asia/Shanghai",
+  "scope": "Persistent order preview and explicit user confirmation; atomic order/stock/cart/draft commit and result recovery",
+  "automatedBackendTests": 73,
+  "browserAcceptancePaths": 1,
+  "databaseSuites": [
+    {
+      "suite": "OrderConfirmationMysqlIT",
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 5.528,
+      "testNames": [
+        "legacyDirectHttpOrderCreationRemainsDisabled",
+        "oneKeyCannotConfirmTwoDrafts",
+        "tamperedSnapshotIsRejected",
+        "httpReadIsOwnerScopedAndDoesNotCreateOrders",
+        "duplicateOrderKeyRollsBackStockInsteadOfReturningUnrelatedOrder",
+        "concurrentDifferentKeysForSameDraftCreateOnlyOneOrder",
+        "concurrentPriceChangeIsObservedAfterProductLock",
+        "changedQuantityCannotBeSilentlyCharged",
+        "concurrentSameKeyCreatesOnlyOneOrder",
+        "itemInsertFailureRollsBackOrderStockCartAndBindingThenCanRetry",
+        "changedProductDescriptionRequiresNewConsent",
+        "changedPriceRequiresNewPreview",
+        "offSaleProductCannotBeOrdered",
+        "wrongFingerprintCannotConfirm",
+        "confirmedResultSurvivesExpiryAndServiceRecreation",
+        "differentUserCannotReadOrConfirmDraft",
+        "httpRequiresExplicitConfirmationAndFingerprint",
+        "secondProductStockFailureRollsBackFirstDeduction",
+        "addedProductCannotBeSilentlyIncluded",
+        "confirmationAtomicallyCreatesSnapshotAndClearsCartWithoutRedis",
+        "previewIsPersistentReadOnlyBusinessSnapshot",
+        "expiredUnconfirmedDraftCannotCreateOrder",
+        "cancelledOrderIsNotRecreatedFromSameDraft"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-c467fc9cb72c4280813718285e88453e",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "OrderConfirmationMysqlIT",
+        "port": 56910,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T19:32:55.7692494+08:00"
+      }
+    },
+    {
+      "suite": "AgentRecoveryMysqlIT",
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 6.55,
+      "testNames": [
+        "recoveryResponseLostAfterCommitIsResolvedFromBusinessRecord",
+        "stockFailureRollsBackRealCartAndStopsRetries",
+        "productOffSaleIsRecheckedAtRecoveryTime",
+        "fingerprintMismatchDoesNotReuseOtherQuantityOrAllowRecovery",
+        "mvcRequiresLoginOwnershipAndConfirmation",
+        "concurrentRecoveryClaimsOneExecution",
+        "inventoryRecoveryPreservesKnownProductBoundary",
+        "corruptedBusinessResultIsNotReportedAsSuccess",
+        "orderPreviewAndUnknownToolsCannotBeReexecuted",
+        "otherUsersBusinessRecordIsNeverUsed",
+        "transientOrderQueryFailureRemainsRecoverableWithoutCrossingUserBoundary",
+        "activeTaskCannotBeRecovered",
+        "mvcRecoveryThenCartQueryShowsExactlyOneItemAndOriginalArguments",
+        "malformedSavedParametersCannotBeExecuted",
+        "missingBusinessRecordDoesNotInventFailureOrWriteOnGet",
+        "originalWriteNeedsConfirmationAndUsesOriginalIdentity",
+        "unknownEarlierStepBlocksLaterRecovery",
+        "commitThenCrashBeforeAuditIsReconciledWithoutAnotherWrite",
+        "successfulReadRecoveryUsesSavedProductAndDoesNotWriteCart",
+        "transientReadFailuresHaveDurableTwoAttemptLimit",
+        "staleRecoveryLeaseCanResumeButLateFailureCannotOverwriteSuccess"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-8eb0f65314514b4a8bc34992f52df86e",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "AgentRecoveryMysqlIT",
+        "port": 54189,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T19:37:28.7760811+08:00"
+      }
+    },
+    {
+      "suite": "OrderConfirmationBrowserIT",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 91.339,
+      "testNames": [
+        "browserConfirmationAcceptance"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-5bcd1ae2b60c49bd83ef47879509361b",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "OrderConfirmationBrowserIT",
+        "port": 50819,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T19:35:55.4628597+08:00"
+      }
+    }
+  ],
+  "unitRegression": [
+    {
+      "suite": "com.example.service.ai.impl.AiRequestIdentityTest",
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.service.ai.impl.CartRequestRetryTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.ai.tool.support.NativeToolPolicyTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.service.ai.impl.AiGroundingValidatorTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.ai.tool.CartToolGovernanceTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "measurements": {
+    "parallelRequestsPerExperiment": 8,
+    "sameKeyOrdersCreated": 1,
+    "differentKeySameDraftOrdersCreated": 1,
+    "browserFinalState": {
+      "drafts": 1,
+      "orders": 1,
+      "orderItems": 1,
+      "stockBefore": 10,
+      "stockAfter": 8,
+      "activeCartItems": 0,
+      "injectedCommittedResponseStatus": 504,
+      "readRecoveredResult": true
+    }
+  },
+  "frontend": {
+    "command": "pnpm run build",
+    "typeCheckPassed": true,
+    "productionBuildPassed": true,
+    "existingLargeBundleWarning": true,
+    "screenshots": [
+      "project-backend/verification/order-preview-browser.jpg",
+      "project-backend/verification/order-confirmed-browser.jpg",
+      "project-backend/verification/order-replay-browser.jpg"
+    ]
+  },
+  "limits": [
+    "V11 applied only to isolated test MySQL; existing business database untouched",
+    "Browser UI acceptance requires an interactive driver; not a standalone automated browser test",
+    "Browser uses actual frontend, MVC, services and MySQL with test authentication and a seeded model response",
+    "No live LLM, production JWT end-to-end or real payment evaluation",
+    "Response loss simulated using a post-commit 504; no OS process-kill test",
+    "Old Redis-only previews require new preview and explicit confirmation after upgrade",
+    "Only selected regression suites were executed; this is not a full-project test coverage claim"
+  ],
+  "sourceHashes": [
+    {
+      "path": "project-backend/src/main/resources/db/migration/V11__persist_order_confirmation.sql",
+      "sha256": "950575d8f0fe8cffc126bfff23063eec761a4ac1d2bfd849fba59bf7818553fd"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/order/impl/OrderDraftStore.java",
+      "sha256": "8e199a0880cae3ede4d6dcaebf8c11b15de0036c15cedd96762c3560b04c086b"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/order/impl/JdbcOrderDraftService.java",
+      "sha256": "7d1284080e34b929cf0ce3ba470544d8d00fba1e2c6f25ba0c76f4bcf794a6fc"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/order/impl/OrderServiceImpl.java",
+      "sha256": "54ff11f353575ef871dfc16fa49a6a6527c09fadb10678ac5d9c583db252e467"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/controller/OrderController.java",
+      "sha256": "0a6022c517e1e1c99d81777c2e49193625748069eea784a49732123c1acaa0f1"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/dto/order/Request/ConfirmOrderRequest.java",
+      "sha256": "f103475c9757e7dadf954abb032f018e56a2b670c69901ec1ea5978d8b267712"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/dto/order/Response/OrderDraftResponse.java",
+      "sha256": "62bafaa89fa6c15f0aa5bb51d7c0dbbe708f0f311e863ef322abf3466f737e86"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/mapper/ProductMapper.java",
+      "sha256": "11f3e286b50e7eda456fa94ca1b94c47b2cef073b13129de7852ffd2a559716b"
+    },
+    {
+      "path": "project-frontend/src/pages/AiAssistantPage.vue",
+      "sha256": "b1d669902c6d3a47bf9467337d32735b513b85e14106004161a5614a7a1d26c7"
+    },
+    {
+      "path": "project-frontend/src/pages/OrdersPage.vue",
+      "sha256": "b9603eeadbdcbbec664f8711bcf3fc8ad866d3374e6b967e6e596b341e3c0857"
+    },
+    {
+      "path": "project-frontend/src/api/orders.ts",
+      "sha256": "b089dc48baa8388e8d40aaec1b279d8dd1664eea7b4167139f040448cf92964e"
+    },
+    {
+      "path": "project-frontend/src/types/api.ts",
+      "sha256": "af5abdba01aa8e20d31a6cdea9e4f1b32b536ec1386fb76d8c53062b625090bf"
+    },
+    {
+      "path": "project-backend/src/test/java/com/example/service/ai/impl/OrderConfirmationMysqlIT.java",
+      "sha256": "c717cc79f24323a4efa06587936efcbbd1ab79ff823d966b270f0ae7f22a78d4"
+    },
+    {
+      "path": "project-backend/src/test/java/com/example/service/ai/impl/OrderConfirmationBrowserIT.java",
+      "sha256": "5d156eaf3ba4566703a50271e23cc19b682148c49d64f257a1cd94fc58012c30"
+    },
+    {
+      "path": "project-backend/scripts/test-cart-mysql.ps1",
+      "sha256": "7394ac74c3e56b0301900f90f863f77f24dd59f2352b2f9c64a9a0be8a23871f"
+    }
+  ]
+}

@@ -22,7 +22,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 根据本轮成功 Tool 的结构化结果校验模型最终文本中的可验证事实。 */
+/** 根据成功工具事实与明确的业务拒绝校验回复；业务拒绝不能推导价格或库存数量。 */
 final class AiGroundingValidator {
     static final String REJECTION_MESSAGE = "部分商品事实暂未确认，请以页面最新信息为准；如需购买，请重新确认订单。";
 
@@ -211,9 +211,18 @@ final class AiGroundingValidator {
                 || message.contains("库存充足") || message.contains("库存足够")) {
             return !evidence.hasAvailableStock();
         }
-        if (message.contains("缺货") || message.contains("无货") || message.contains("没有货") || message.contains("已售罄")
-                || message.contains("库存不足")) {
+        if (message.contains("缺货") || message.contains("无货") || message.contains("没有货") || message.contains("已售罄")) {
             return !evidence.hasUnavailableStock();
+        }
+        if (message.contains("库存不足")) {
+            if (evidence.hasUnavailableStock()) return false;
+            // 所需数量不足不等于零库存；只支持原操作涉及的商品，不向其他商品转移依据。
+            if (evidence.insufficientProductIds().isEmpty()) return true;
+            Matcher mentions = PRODUCT_ID_PATTERN.matcher(message);
+            while (mentions.find()) {
+                if (!evidence.insufficientProductIds().contains(Long.parseLong(mentions.group(1)))) return true;
+            }
+            return false;
         }
         return evidence.stocks().isEmpty();
     }
@@ -258,6 +267,7 @@ final class AiGroundingValidator {
     private record FactEvidence(Set<Long> productIds,
                                 Set<BigDecimal> amounts,
                                 Set<Integer> stocks,
+                                Set<Long> insufficientProductIds,
                                 boolean hasAvailableStock,
                                 boolean hasUnavailableStock,
                                 boolean hasOrderStatus) {
@@ -266,6 +276,7 @@ final class AiGroundingValidator {
             Set<Long> productIds = new LinkedHashSet<>();
             Set<BigDecimal> amounts = new LinkedHashSet<>();
             Set<Integer> stocks = new LinkedHashSet<>();
+            Set<Long> insufficientProductIds = new LinkedHashSet<>();
             boolean hasAvailableStock = false;
             boolean hasUnavailableStock = false;
             boolean hasOrderStatus = false;
@@ -305,6 +316,14 @@ final class AiGroundingValidator {
                             }
                         }
                     }
+                } else if (result instanceof CartToolResult cart && !cart.success()
+                        && "BUSINESS_FAILURE".equals(cart.failureType())
+                        && "商品库存不足".equals(cart.message())
+                        && ("add".equals(cart.operation()) || "update".equals(cart.operation()))
+                        && cart.changedProductId() != null) {
+                    // 仅识别业务服务确定返回的拒绝，系统异常、任意失败文本不能充当事实。
+                    insufficientProductIds.add(cart.changedProductId());
+                    productIds.add(cart.changedProductId());
                 } else if (result instanceof OrderQueryToolResult orderQuery && orderQuery.success()) {
                     hasOrderStatus = hasOrderStatus || orderQuery.order() != null || !orderQuery.orders().isEmpty();
                     addOrderFacts(productIds, amounts, orderQuery.order());
@@ -348,7 +367,7 @@ final class AiGroundingValidator {
                 }
             }
             return new FactEvidence(Set.copyOf(productIds), Set.copyOf(amounts), Set.copyOf(stocks),
-                    hasAvailableStock, hasUnavailableStock, hasOrderStatus);
+                    Set.copyOf(insufficientProductIds), hasAvailableStock, hasUnavailableStock, hasOrderStatus);
         }
 
         private static void addOrderFacts(Set<Long> productIds, Set<BigDecimal> amounts, OrderResponse order) {

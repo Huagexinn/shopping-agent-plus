@@ -71,6 +71,8 @@ public class OrderServiceImpl implements OrderService {
     private OrderIdempotencyService orderIdempotencyService;
     @Resource
     private OrderDraftService orderDraftService;
+    @Resource
+    private OrderDraftStore draftStore;
 
     /** 订单支付时限，订单创建时写入 expires_at；非法配置回退为 30 分钟。 */
     @Value("${app.order.payment-timeout:30m}")
@@ -200,48 +202,20 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
-    public OrderResponse confirmDraft(Long userId, String draftId, String idempotencyKey) {
+    @Transactional(timeout = 30, rollbackFor = Exception.class)
+    public OrderResponse confirmDraft(Long userId, String draftId, String idempotencyKey, String fingerprint) {
         Long currentUserId = validateUserId(userId);
         String normalizedKey = validateIdempotencyKey(idempotencyKey);
         validateDraftId(draftId);
-        requireConfirmInfrastructure();
-
-        String boundDraftId = orderIdempotencyService.getDraftId(currentUserId, normalizedKey);
-        if (boundDraftId != null && !boundDraftId.equals(draftId)) {
-            throw new ConflictException("同一幂等键不能确认不同订单预览");
-        }
-        Long cachedOrderId = orderIdempotencyService.getResult(currentUserId, normalizedKey);
-        if (cachedOrderId != null) {
-            OrderResponse cachedResponse = findOrderResponse(currentUserId, cachedOrderId);
-            if (cachedResponse != null) {
-                return cachedResponse;
-            }
-        }
-
-        OrderDraft draft = orderDraftService.get(currentUserId, draftId);
-        orderIdempotencyService.bindDraft(currentUserId, normalizedKey, draftId);
-        OrderIdempotencyService.LockResult lockResult = orderIdempotencyService
-                .tryAcquire(currentUserId, normalizedKey);
-        if (lockResult == null || !lockResult.available()) {
-            throw new BusinessException("订单确认暂不可用，请稍后重试");
-        }
-        if (!lockResult.acquired()) {
-            OrderEntity processingOrder = orderMapper
-                    .selectByUserIdAndIdempotencyKey(currentUserId, normalizedKey);
-            if (processingOrder != null) {
-                return toResponse(processingOrder, orderItemMapper.selectByOrderId(processingOrder.getId()));
-            }
-            throw new ConflictException("订单正在处理中，请稍后重试");
-        }
-
-        ProcessingContext processingContext = registerProcessing(lockResult.ownerToken(), currentUserId,
-                normalizedKey, draftId);
-        OrderEntity existing = orderMapper.selectByUserIdAndIdempotencyKeyForUpdate(currentUserId, normalizedKey);
-        if (existing != null) {
-            completeProcessing(processingContext, existing.getId());
-            return toResponse(existing, orderItemMapper.selectByOrderId(existing.getId()));
-        }
+        var saved = draftStore.load(currentUserId, draftId, true);
+        if (!java.util.Objects.equals(saved.fingerprint(), fingerprint))
+            throw new ConflictException("确认内容与订单预览不一致，请重新查看预览");
+        // 草稿锁是唯一执行入口；成功后即使换键或预览过期，也只返回原订单。
+        if (saved.orderId() != null) return findDetail(currentUserId, saved.orderId());
+        if (saved.expired() || !"PREVIEWED".equals(saved.status()))
+            throw new ConflictException("订单预览已过期或已取消，请重新预览");
+        draftStore.bind(currentUserId, draftId, normalizedKey);
+        OrderDraft draft = saved.draft();
 
         CartEntity cart = cartMapper.selectByUserIdForUpdate(currentUserId);
         if (cart == null) {
@@ -281,7 +255,7 @@ public class OrderServiceImpl implements OrderService {
             if (cartItem == null || !draftItem.quantity().equals(cartItem.getQuantity())) {
                 throw new BusinessException("购物车已变化，请重新创建订单预览");
             }
-            ProductEntity product = productService.findById(draftItem.productId());
+            ProductEntity product = productMapper.selectByIdForUpdate(draftItem.productId());
             if (product == null) {
                 throw new BusinessException("商品不存在，无法确认订单");
             }
@@ -296,11 +270,21 @@ public class OrderServiceImpl implements OrderService {
                 throw new BusinessException("商品价格已变化，请重新创建订单预览");
             }
             BigDecimal subtotal = product.getPrice().multiply(BigDecimal.valueOf(draftItem.quantity()));
+            if (!java.util.Objects.equals(product.getTitle(), draftItem.productTitle())
+                    || !java.util.Objects.equals(product.getBrand(), draftItem.brand())
+                    || !java.util.Objects.equals(product.getModel(), draftItem.model())
+                    || draftItem.previewSubtotal() == null || subtotal.compareTo(draftItem.previewSubtotal()) != 0)
+                throw new ConflictException("商品信息已变化，请重新预览");
             totalAmount = totalAmount.add(subtotal);
             orderItems.add(new OrderItemEntity(null, null, product.getId(), product.getTitle(),
                     product.getBrand(), product.getModel(), product.getPrice(), draftItem.quantity(),
                     subtotal, now, now, 0));
         }
+        if (draft.previewTotalAmount() == null || totalAmount.compareTo(draft.previewTotalAmount()) != 0)
+            throw new ConflictException("订单预览金额不一致，请重新预览");
+        // 等待购物车/商品行锁期间也可能过期，写入前重新读取数据库时间。
+        if (!draft.expiresAt().isAfter(draftStore.now()))
+            throw new ConflictException("订单预览已过期，请重新预览");
 
         for (OrderItemEntity orderItem : orderItems) {
             int affected = productMapper.decrementStock(orderItem.getProductId(), orderItem.getQuantity(), now);
@@ -318,13 +302,8 @@ public class OrderServiceImpl implements OrderService {
                 throw new BusinessException("订单创建失败");
             }
         } catch (DuplicateKeyException exception) {
-            OrderEntity concurrentOrder = orderMapper
-                    .selectByUserIdAndIdempotencyKey(currentUserId, normalizedKey);
-            if (concurrentOrder != null) {
-                completeProcessing(processingContext, concurrentOrder.getId());
-                return toResponse(concurrentOrder, orderItemMapper.selectByOrderId(concurrentOrder.getId()));
-            }
-            throw new ConflictException("订单正在处理中，请稍后重试");
+            // 已发生库存写入，必须回滚整个事务，不能吞掉冲突后返回其他订单。
+            throw new ConflictException("确认键已被其他订单使用，请重新预览");
         }
 
         for (OrderItemEntity orderItem : orderItems) {
@@ -348,7 +327,7 @@ public class OrderServiceImpl implements OrderService {
         if (cleared != cartItemIds.size()) {
             throw new BusinessException("购物车清理失败，订单未创建");
         }
-        completeProcessing(processingContext, order.getId());
+        draftStore.confirmed(currentUserId, draftId, order.getId());
         return toResponse(order, orderItems);
     }
 
@@ -622,10 +601,4 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private void requireConfirmInfrastructure() {
-        if (orderIdempotencyService == null || orderDraftService == null
-                || !orderIdempotencyService.isAvailable()) {
-            throw new BusinessException("订单确认暂不可用，请稍后重试");
-        }
-    }
 }

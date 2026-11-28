@@ -23,3 +23,10 @@ docker-compose.override.yml
 # Node.js
 **/node_modules/
 **/dist/
+
+# Local database/container data and private verification material
+milvus/volumes/
+**/backups/
+verification-private/
+.DS_Store
+Thumbs.db

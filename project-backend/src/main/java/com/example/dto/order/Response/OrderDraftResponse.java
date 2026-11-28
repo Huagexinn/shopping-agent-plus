@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 订单预览草稿；草稿不是订单，不包含订单号或订单状态。 */
+/** 不可变订单预览及当前可用性；确认后可通过 confirmedOrderId 查询原订单。 */
 public record OrderDraftResponse(
         String draftId,
         LocalDateTime createdAt,
@@ -13,7 +13,10 @@ public record OrderDraftResponse(
         List<OrderPreviewItemResponse> items,
         BigDecimal previewTotalAmount,
         String source,
-        int version) {
+        int version,
+        String fingerprint,
+        Long confirmedOrderId,
+        String unavailableReason) {
     public OrderDraftResponse {
         items = items == null ? List.of() : List.copyOf(items);
     }

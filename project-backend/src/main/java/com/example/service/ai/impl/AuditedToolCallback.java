@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.tool.execution.ToolExecutionException;
 
 import java.util.List;
 import java.util.Map;
@@ -47,12 +48,18 @@ public final class AuditedToolCallback implements ToolCallback {
             String result = delegate.call(arguments, context);
             audit.complete(entry, NativeToolAudit.parseToolResult(getToolDefinition().name(), result));
             return result;
-        } catch (BusinessException exception) {
-            audit.fail(entry, exception);
-            boolean retryable = exception.getCode() == 4000;
-            return serializeToolFailure(getToolDefinition().name(), exception.getMessage(), retryable,
-                    retryable ? "PARAMETER_ERROR" : "BUSINESS_ERROR");
         } catch (RuntimeException exception) {
+            // Spring AI 的方法回调会包装业务异常；仍按业务冲突回传，不能当作模型系统故障。
+            Throwable cause = exception;
+            while (cause instanceof ToolExecutionException && cause.getCause() != null) {
+                cause = cause.getCause();
+            }
+            if (cause instanceof BusinessException business) {
+                audit.fail(entry, business);
+                boolean retryable = business.getCode() == 4000;
+                return serializeToolFailure(getToolDefinition().name(), business.getMessage(), retryable,
+                        retryable ? "PARAMETER_ERROR" : "BUSINESS_ERROR");
+            }
             audit.fail(entry, exception);
             log.warn("AI模型Tool执行失败 seq={} tool={}", entry.sequence(), getToolDefinition().name());
             throw exception;

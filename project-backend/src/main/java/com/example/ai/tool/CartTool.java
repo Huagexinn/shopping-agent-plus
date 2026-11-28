@@ -51,7 +51,10 @@ public class CartTool {
             return operationIdempotencyService.execute(currentUserId, normalized.operationId(), fingerprint,
                     () -> executeWrite(currentUserId, normalized));
         } catch (BusinessException exception) {
-            throw exception;
+            if (exception instanceof com.example.exception.ConflictException) throw exception;
+            // 到这里事务已经回滚；不能在事务内吞掉异常，否则代理会抛 UnexpectedRollbackException。
+            return new CartToolResult(TOOL_NAME, false, normalized.operation(), exception.getMessage(), null,
+                    normalized.productId(), "BUSINESS_FAILURE");
         } catch (RuntimeException exception) {
             return failure(normalized.operation(), exception, normalized.productId());
         }
@@ -92,17 +95,7 @@ public class CartTool {
             );
 
         } catch (BusinessException exception) {
-
-            // 业务失败不持久化操作记录
-            // 外层幂等服务会触发事务回滚
-            return new CartToolResult(
-                    TOOL_NAME,
-                    false,
-                    request.operation(),
-                    exception.getMessage(),
-                    null,
-                    request.productId()
-            );
+            throw exception;
         }
     }
 
@@ -114,10 +107,10 @@ public class CartTool {
     private CartToolResult failure(String operation, RuntimeException exception, Long productId) {
         if (isTimeout(exception)) {
             return new CartToolResult(TOOL_NAME, false, operation,
-                    "购物车操作超时，未自动重试，请使用原操作标识查询结果", null, productId);
+                    "购物车操作超时，请查询原任务结果", null, productId, "SYSTEM_FAILURE");
         }
         return new CartToolResult(TOOL_NAME, false, operation,
-                "购物车操作暂不可用，请稍后重试", null, productId);
+                "购物车操作暂不可用，请先核对原任务结果", null, productId, "SYSTEM_FAILURE");
     }
 
     private boolean isTimeout(Throwable throwable) {
@@ -174,13 +167,7 @@ public class CartTool {
     }
 
     private String fingerprint(NormalizedRequest request) {
-        String value = request.operation() + ":" + request.productId() + ":" + request.quantity();
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256算法不可用", exception);
-        }
+        return com.example.ai.tool.support.CartOperationIdentity.fingerprint(request.operation(), request.productId(), request.quantity());
     }
 
     private Long requireUserId(Long userId) {

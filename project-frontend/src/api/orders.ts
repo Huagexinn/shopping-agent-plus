@@ -13,8 +13,13 @@ export async function previewOrder(): Promise<ApiResponse<OrderDraftResponse>> {
   return response.data
 }
 
-export async function confirmOrder(draftId: string, idempotencyKey: string): Promise<ApiResponse<OrderResponse>> {
-  const response = await http.post<ApiResponse<OrderResponse>>(`/orders/${draftId}/confirm`, {}, {
+export async function fetchOrderDraft(draftId: string): Promise<ApiResponse<OrderDraftResponse>> {
+  const response = await http.get<ApiResponse<OrderDraftResponse>>(`/orders/drafts/${encodeURIComponent(draftId)}`)
+  return response.data
+}
+
+export async function confirmOrder(draftId: string, idempotencyKey: string, fingerprint: string): Promise<ApiResponse<OrderResponse>> {
+  const response = await http.post<ApiResponse<OrderResponse>>(`/orders/${draftId}/confirm`, { confirmed: true, fingerprint }, {
     headers: { 'Idempotency-Key': idempotencyKey },
   })
   return response.data

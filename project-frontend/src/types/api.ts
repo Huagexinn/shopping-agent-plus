@@ -47,6 +47,8 @@ export interface ProductResponse {
 }
 
 export interface AiChatRequest {
+  /** 新消息生成一次，网络重试复用。 */
+  clientRequestId: string
   conversationId: string
   message: string
 }
@@ -221,11 +223,14 @@ export interface OrderDraftResponse {
   draftId: string
   createdAt: string
   expiresAt: string
-  status: 'PREVIEWED'
+  status: 'PREVIEWED' | 'CONFIRMED' | 'EXPIRED' | 'STALE' | 'CANCELLED'
   items: OrderPreviewItemResponse[]
   previewTotalAmount: number | string
   source: 'CART'
   version: number
+  fingerprint: string
+  confirmedOrderId?: number | null
+  unavailableReason?: string | null
 }
 
 export interface PageResponse<T> {
@@ -234,4 +239,32 @@ export interface PageResponse<T> {
   size: number
   total: number
   pages: number
+}
+
+/** 服务端保存的执行事实。UNKNOWN 不表示操作已回滚。 */
+export interface AgentRunResponse {
+  runId: string
+  clientRequestId: string
+  conversationId: string
+  userMessage: string
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'INTERRUPTED'
+  errorCode: string | null
+  createdAt: string
+  finishedAt: string | null
+  response: AiChatResponse | null
+  steps: Array<{
+    sequence: number
+    toolName: string
+    arguments: string
+    status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
+    outcome: string | null
+    resultJson: string | null
+    resultSource: 'TOOL_EXECUTION' | 'BUSINESS_RECORD' | 'RECOVERY'
+    retryCount: number
+    recovering: boolean
+    canRetry: boolean
+    recoveryDescription: string
+    resultSummary: string | null
+    recoveryAttempts: Array<{ attempt: number; status: string; outcome: string | null; createdAt: string }>
+  }>
 }

@@ -56,6 +56,9 @@ public class AiChatStreamDriver {
      */
     public Flux<AiStreamEventResponse> stream(Long userId, AiChatRequest request) {
         AiOrchestrationCore.Prepared prepared = core.prepare(userId, request);
+        if (prepared.replay() != null) return Flux.just(
+                AiStreamEventResponse.of("meta", new AiStreamMetaResponse(request.getConversationId(), prepared.aiTraceId(), prepared.requestId())),
+                AiStreamEventResponse.of("final", prepared.replay()));
         return Flux.create(sink -> new StreamRun(sink, prepared).start());
     }
 
@@ -71,6 +74,7 @@ public class AiChatStreamDriver {
         /** 保证 replace / final / error / complete 只发生一次，中断后的残余 chunk 一律丢弃。 */
         private final AtomicBoolean terminated = new AtomicBoolean(false);
         private final AtomicInteger deltaCount = new AtomicInteger();
+        private long lastHeartbeat = System.nanoTime();
 
         private StreamRun(FluxSink<AiStreamEventResponse> sink, AiOrchestrationCore.Prepared prepared) {
             this.sink = sink;
@@ -78,6 +82,9 @@ public class AiChatStreamDriver {
         }
 
         private void start() {
+            sink.onCancel(this::cancel);
+            sink.onDispose(this::cancel);
+            if (terminated.get()) return;
             sink.next(AiStreamEventResponse.of("meta", new AiStreamMetaResponse(
                     prepared.request().getConversationId(), prepared.aiTraceId(), prepared.requestId())));
             log.info("AI_STREAM_START aiTraceId={} reqId={} conversationId={} userKey={}",
@@ -88,31 +95,49 @@ public class AiChatStreamDriver {
             try {
                 spec = core.buildSpec(prepared);
             } catch (RuntimeException exception) {
-                if (terminated.compareAndSet(false, true)) {
-                    AiChatResponse response = core.fail(prepared, exception,
-                            AiOrchestrationCore.ModelMetrics.unavailable(0L));
-                    emitFailure(response);
-                    logEnd("failed", response, exception.getClass().getSimpleName());
-                    sink.complete();
-                }
+                deliver(() -> onError(exception));
                 return;
             }
 
-            Disposable subscription = modelGateway.stream(spec)
-                    .subscribe(this::onChunk, this::onError, this::onComplete);
+            Disposable subscription;
+            try {
+                if (terminated.get()) return;
+                subscription = modelGateway.stream(spec)
+                        .subscribe(chunk -> deliver(() -> onChunk(chunk)),
+                                error -> deliver(() -> onError(error)), () -> deliver(this::onComplete));
+            } catch (RuntimeException exception) {
+                deliver(() -> onError(exception));
+                return;
+            }
             upstream.set(subscription);
             // 中断可能发生在 subscribe 返回之前（同步 Flux 的第一次 onNext 就会触发校验），
             // 那时 upstream 还是 null，dispose 会被跳过。这里补一次，确保生成一定被掐断。
             if (terminated.get()) {
                 subscription.dispose();
             }
-            sink.onCancel(this::cancel);
-            sink.onDispose(this::cancel);
+        }
+
+        /** 持久化失败也必须终止客户端流，不能因回调抛错而永远等待 final。 */
+        private void deliver(Runnable callback) {
+            try {
+                callback.run();
+            } catch (RuntimeException exception) {
+                terminated.set(true);
+                try { core.interrupt(prepared); }
+                catch (RuntimeException persistenceFailure) { exception.addSuppressed(persistenceFailure); }
+                Disposable subscription = upstream.get();
+                if (subscription != null) subscription.dispose();
+                sink.error(exception);
+            }
         }
 
         private void onChunk(ChatClientResponse clientResponse) {
             if (terminated.get()) {
                 return;
+            }
+            if (System.nanoTime() - lastHeartbeat > TimeUnit.SECONDS.toNanos(15)) {
+                core.heartbeat(prepared);
+                lastHeartbeat = System.nanoTime();
             }
             ChatResponse chatResponse = clientResponse == null ? null : clientResponse.chatResponse();
             if (chatResponse != null) {
@@ -124,7 +149,7 @@ public class AiChatStreamDriver {
             }
             AiStreamingGroundingGuard.Settlement settlement = guard.accept(text,
                     prepared.request().getMessage(),
-                    prepared.audit().successfulResults(),
+                    prepared.audit().groundingResults(),
                     prepared.audit().knowledgeReferences());
             if (settlement.rejected()) {
                 interrupt(settlement.failureType());
@@ -196,6 +221,11 @@ public class AiChatStreamDriver {
          */
         private void cancel() {
             if (terminated.compareAndSet(false, true)) {
+                try {
+                    core.interrupt(prepared);
+                } catch (RuntimeException exception) {
+                    log.error("AI_RUN_CANCEL_PERSIST_FAILED aiTraceId={}", prepared.aiTraceId(), exception);
+                }
                 log.warn("AI_STREAM_CANCELLED aiTraceId={} reqId={} conversationId={} userKey={} deltaCount={} renderedChars={} durationMs={}",
                         prepared.aiTraceId(), prepared.requestId(), prepared.request().getConversationId(),
                         prepared.userKey(), deltaCount.get(), guard.text().length(), elapsedMillis());

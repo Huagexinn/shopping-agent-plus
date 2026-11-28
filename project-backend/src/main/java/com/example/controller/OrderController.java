@@ -77,11 +77,19 @@ public class OrderController {
             @PathVariable String draftId,
             @Parameter(description = "同一用户同一确认请求的唯一幂等键，长度1至64个可打印字符", required = true)
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-            @RequestBody(required = false) ConfirmOrderRequest request) {
+            @Valid @RequestBody ConfirmOrderRequest request) {
         Long currentUserId = requireUserId(userId);
         validateIdempotencyKey(idempotencyKey);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success(orderService.confirmDraft(currentUserId, draftId, idempotencyKey)));
+                .body(ApiResponse.success(orderService.confirmDraft(currentUserId, draftId, idempotencyKey, request.fingerprint())));
+    }
+
+    @GetMapping("/drafts/{draftId}")
+    @Operation(summary = "查询本人原订单预览、有效性和确认结果")
+    public ApiResponse<OrderDraftResponse> draft(
+            @RequestAttribute(value = Const.ATTR_USER_ID, required = false) Long userId,
+            @PathVariable String draftId) {
+        return ApiResponse.success(orderDraftService.detail(requireUserId(userId), draftId));
     }
 
     @GetMapping

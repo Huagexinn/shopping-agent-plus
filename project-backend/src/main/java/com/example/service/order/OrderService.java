@@ -11,7 +11,7 @@ public interface OrderService {
     OrderResponse create(Long userId, String idempotencyKey);
 
     /** 确认当前用户指定订单预览，并在事务内重新校验价格与库存。 */
-    OrderResponse confirmDraft(Long userId, String draftId, String idempotencyKey);
+    OrderResponse confirmDraft(Long userId, String draftId, String idempotencyKey, String fingerprint);
 
     /** 分页查询当前用户订单。 */
     Page<OrderSummaryResponse> page(Long userId, OrderQueryRequest request);

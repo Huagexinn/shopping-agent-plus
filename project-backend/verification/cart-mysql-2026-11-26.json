@@ -1,0 +1,51 @@
+{
+  "completedAt": "2026-11-26T15:28:09.7325212+08:00",
+  "mysqlVersion": "8.0.46",
+  "javaVersion": "21.0.13.0.3",
+  "scope": "Real MySQL + MyBatis mapper + CartOperationIdempotencyServiceImpl transaction verification; business writes use test_cart_counter, not the complete CartService or Agent workflow.",
+  "tests": 6,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "suiteDurationSeconds": "2.119",
+  "cases": [
+    {
+      "name": "systemFailureRollsBackBothOperationAndCart",
+      "status": "passed"
+    },
+    {
+      "name": "businessFailureRollsBackBothOperationAndCartThenAllowsRetry",
+      "status": "passed"
+    },
+    {
+      "name": "operationKeysAreUserScopedAndCaseSensitive",
+      "status": "passed"
+    },
+    {
+      "name": "concurrentDuplicatesCommitExactlyOneWrite",
+      "status": "passed"
+    },
+    {
+      "name": "lostResponseAndNewServiceInstanceReuseCommittedResultWithoutRedis",
+      "status": "passed"
+    },
+    {
+      "name": "changedFingerprintDoesNotWriteAgain",
+      "status": "passed"
+    }
+  ],
+  "isolation": {
+    "verifiedIsolatedInstance": true,
+    "temporarySchemaRemoved": true,
+    "serverStopped": true,
+    "temporaryDataRemoved": true,
+    "existingBusinessDatabaseModified": false
+  },
+  "sourceSha256": {
+    "src/test/java/com/example/service/ai/impl/CartOperationMysqlIT.java": "451089f08ab11775a003197856c45afb48993e458facab84f9e6098b94431959",
+    "src/main/java/com/example/mapper/CartOperationRecordMapper.java": "936cdc478dfb074a319085e60236a45853bf44dda3420ae9031ba84ac12d4292",
+    "src/main/java/com/example/service/ai/impl/CartOperationIdempotencyServiceImpl.java": "7a337703bcbb59569d1ede80e1a24ceae63d13728cb8616a1ba2795d5e989854",
+    "src/main/resources/db/migration/V8__create_cart_operation_records.sql": "9f0d7e4716955b04c9ba7348da013d0fe083495fe95ebc0df11e57c9b28c42a3"
+  },
+  "rawEvidenceDirectory": "project-backend/target/mysql-validation-c4b85819ecfa46d8b4a4d583643fe190"
+}

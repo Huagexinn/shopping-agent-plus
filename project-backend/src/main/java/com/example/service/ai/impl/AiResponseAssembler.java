@@ -89,12 +89,12 @@ public class AiResponseAssembler {
 
     public String failureMessage(AiChatResultStatus resultStatus) {
         return switch (resultStatus) {
-            case MODEL_TIMEOUT -> "AI 服务响应超时，请稍后重试。";
-            case EMPTY_RESPONSE -> "AI 未返回有效回复，请稍后重试。";
-            case TOOL_ERROR -> "AI 查询商城数据失败，请稍后重试。";
-            case RAG_UNAVAILABLE -> "商城知识检索暂时不可用，请稍后重试。";
+            case MODEL_TIMEOUT -> "AI 服务响应超时，请查询执行结果；重新购买前请先核对购物车或订单。";
+            case EMPTY_RESPONSE -> "AI 未返回有效回复，请查询执行结果，已完成的操作不会自动撤销。";
+            case TOOL_ERROR -> "AI 工具调用未正常完成，请查询执行结果并核对购物车或订单。";
+            case RAG_UNAVAILABLE -> "商城知识检索暂时不可用，请先查看本次执行结果。";
             case GROUNDING_REJECTED -> AiGroundingValidator.REJECTION_MESSAGE;
-            case MODEL_ERROR -> "AI 服务暂时不可用，请稍后重试。";
+            case MODEL_ERROR -> "AI 服务暂时不可用，请查询执行结果，已完成的操作不会自动撤销。";
             case SUCCESS -> "";
         };
     }

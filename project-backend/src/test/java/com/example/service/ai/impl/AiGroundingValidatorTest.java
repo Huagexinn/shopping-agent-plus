@@ -10,6 +10,34 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 class AiGroundingValidatorTest {
 
+    private com.example.ai.model.response.CartToolResult insufficient(String failureType) {
+        return new com.example.ai.model.response.CartToolResult("CartTool", false, "add", "商品库存不足", null, 1L, failureType);
+    }
+
+    @Test void acceptsVerifiedStockRejectionWithoutPromotingItToSuccess() {
+        var audit = new NativeToolAudit("test", "test", "test", "test");
+        var entry = audit.start("CartTool", "{\"request\":{\"operation\":\"add\",\"productId\":1,\"quantity\":20}}");
+        audit.complete(entry, insufficient("BUSINESS_FAILURE"));
+        assertTrue(audit.successfulResults().isEmpty());
+        assertTrue(AiGroundingValidator.validate("商品ID 1 库存不足，无法添加所需数量。", "", audit.groundingResults()).accepted());
+    }
+
+    @Test void stockRejectionCannotProveAmountsQuantitiesOrOtherProducts() {
+        for (String text : List.of("库存为0件", "库存为10件", "已经售罄", "当前无货", "库存充足", "价格为100元", "商品ID 2 库存不足"))
+            assertFalse(AiGroundingValidator.validate(text, "", List.of(insufficient("BUSINESS_FAILURE"))).accepted(), text);
+    }
+
+    @Test void systemFailureCannotProveInsufficientStock() {
+        assertFalse(AiGroundingValidator.validate("库存不足", "", List.of(insufficient("SYSTEM_FAILURE"))).accepted());
+    }
+
+    @Test void streamingAndFinalValidationUseTheSameRejectionEvidence() {
+        var guard = new AiStreamingGroundingGuard();
+        var result = guard.accept("库存不足，无法添加所需数量。", "", List.of(insufficient("BUSINESS_FAILURE")), List.of());
+        assertFalse(result.rejected());
+        assertFalse(result.delta().isBlank());
+    }
+
 
     @Test
     void shouldAcceptCorrectProductFacts() {

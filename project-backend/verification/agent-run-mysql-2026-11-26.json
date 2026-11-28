@@ -1,0 +1,100 @@
+{
+  "verificationDate": "2026-11-26",
+  "timezone": "Asia/Shanghai",
+  "suite": "AgentRunMysqlIT",
+  "engine": "MySQL",
+  "version": "8.0.46",
+  "tests": 14,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "durationSeconds": 2.429,
+  "testNames": [
+    "identitiesAreCaseSensitive",
+    "streamCompletionStoresFailureBeforeEmittingTerminalEvent",
+    "streamCancellationPersistsInterruption",
+    "usersCannotReadOrMutateOtherUsersRuns",
+    "auditPersistsIntentBeforeExecutionAndUnknownOnFailure",
+    "expiredHeartbeatIsInterruptedWithoutAutomaticTakeover",
+    "concurrentSubmissionsHaveOneOwner",
+    "savedResponseSurvivesNewInstanceAndBothDriversSkipModel",
+    "lateCommittedToolResultIsRetainedAfterInterruption",
+    "interruptedRunIsNotReexecutedAndNewToolsAreFenced",
+    "payloadAndConversationAreBoundToIdentity",
+    "failedModelResponseIsPersistedAndReplayedWithoutSecondCall",
+    "heartbeatKeepsLiveRunQueryable",
+    "streamPersistenceFailureTerminatesInsteadOfHangingOrClaimingSuccess"
+  ],
+  "observations": {
+    "savedReplyReplayModelCalls": 0,
+    "concurrentRequests": 8,
+    "conflicts": 7,
+    "acceptedExecutions": 1
+  },
+  "scope": [
+    "Real JDBC and MySQL constraints/transactions",
+    "Actual sync/stream drivers with deterministic model substitutes",
+    "No existing business database migration",
+    "No live model or full shopping HTTP/browser acceptance",
+    "No automatic resume or business-record reconciliation for unknown steps"
+  ],
+  "regression": {
+    "failures": 0,
+    "log": "project-backend/target/agent-run-regression.log",
+    "errors": 0,
+    "tests": 29,
+    "skipped": 0
+  },
+  "frontend": {
+    "command": "pnpm run build",
+    "productionBuildPassed": true,
+    "typeCheckPassed": true
+  },
+  "cleanup": {
+    "mysqlVersion": "8.0.46",
+    "testClass": "AgentRunMysqlIT",
+    "port": 54248,
+    "verifiedIsolatedInstance": true,
+    "testExitCode": 0,
+    "serverStopped": true,
+    "temporaryDataRemoved": true,
+    "failureMessage": null,
+    "cleanupError": null,
+    "completedAt": "2026-11-26T15:53:10.0548056+08:00"
+  },
+  "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-91a68820f87542c88b81a34da1fdcd11",
+  "sourceHashes": [
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/JdbcAgentRunService.java",
+      "sha256": "d0f153c80398b8b13809470667acdd8f86d83570a9304b9bcecfffcd4f8d500b"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/AiOrchestrationCore.java",
+      "sha256": "d7484b13f383ef1aadee71d67dfb233dd81553623882a25adacb61ebcf8e0614"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/AiChatStreamDriver.java",
+      "sha256": "3edf7aa50dabb13737fa19a89572511583b4834847a491603f5248cad2351602"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/NativeToolAudit.java",
+      "sha256": "80db8ea76e11af9c24ce9e93ec7a43afe611f7ec98593169033c361c6c00b1f9"
+    },
+    {
+      "path": "project-backend/src/main/resources/db/migration/V9__create_agent_runs.sql",
+      "sha256": "98aaf7966eee8c474632dbc623ad14e355d54f96c0c445caa5f739e30058608e"
+    },
+    {
+      "path": "project-backend/src/test/java/com/example/service/ai/impl/AgentRunMysqlIT.java",
+      "sha256": "9abc402c204a6519b77c1143348bc85af000b0e6727df0bc3c63c9b165981481"
+    },
+    {
+      "path": "project-backend/scripts/test-cart-mysql.ps1",
+      "sha256": "5161a30d8dfd07140364c28e6cd1f6c1c8b3c19a4bd071ebf1e1ca0a612f7d3f"
+    },
+    {
+      "path": "project-frontend/src/pages/AiAssistantPage.vue",
+      "sha256": "39869752f095f566bda9673251c43df56f9f22990ff1f07ee9e66cca111ca566"
+    }
+  ]
+}

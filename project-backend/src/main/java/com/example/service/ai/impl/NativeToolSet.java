@@ -24,7 +24,7 @@ import java.util.List;
 /** 为单次请求创建的原生 Tool 集合；用户身份只从 ToolContext 读取。 */
 public final class NativeToolSet {
     private final Long userId;
-    private final String operationToken;
+    private final String clientRequestId;
     private final NativeToolAudit audit;
     private final ProductDetailTool productDetailTool;
     private final InventoryTool inventoryTool;
@@ -33,12 +33,15 @@ public final class NativeToolSet {
     private final OrderDraftService orderDraftService;
     private final HybridRagService hybridRagService;
 
-    public NativeToolSet(Long userId, String operationToken, NativeToolAudit audit,
+    public NativeToolSet(Long userId, String clientRequestId, NativeToolAudit audit,
                          ProductDetailTool productDetailTool, InventoryTool inventoryTool,
                          CartTool cartTool, OrderQueryTool orderQueryTool, OrderDraftService orderDraftService,
                          HybridRagService hybridRagService) {
         this.userId = userId;
-        this.operationToken = operationToken;
+        if (clientRequestId == null || !clientRequestId.matches("[A-Za-z0-9][A-Za-z0-9_-]{7,63}")) {
+            throw new BusinessException("请求标识格式不正确");
+        }
+        this.clientRequestId = clientRequestId;
         this.audit = audit;
         this.productDetailTool = productDetailTool;
         this.inventoryTool = inventoryTool;
@@ -79,9 +82,11 @@ public final class NativeToolSet {
                                ToolContext context) {
         if (request == null || request.operation() == null) throw new BusinessException("购物车操作不能为空");
         String operation = request.operation().trim().toLowerCase(java.util.Locale.ROOT);
-        String operationId = "get".equals(operation) ? null : "ai-" + operationToken + "-" + operation + "-"
-                + request.productId() + "-" + request.quantity();
-        return cartTool.execute(requireContextUserId(context), new CartToolRequest(operation, request.productId(), request.quantity(), operationId));
+        // 一个提交中，同一商品的同类写操作只有一个身份，与调用顺序无关。
+        // 数量只进入 CartTool 的参数指纹：重试改变数量时冲突，不能绕过去重再次加购。
+        // 用户主动追加购买必须提交新的 clientRequestId；userId 由幂等服务单独隔离。
+        return cartTool.execute(requireContextUserId(context),
+                com.example.ai.tool.support.CartOperationIdentity.request(clientRequestId, operation, request.productId(), request.quantity()));
     }
 
     @Tool(name = "OrderQueryTool", description = "查询当前登录用户自己的订单。operation=list 时仅传可选的 page、size，不能传 orderId；operation=detail 时必须传 orderId，不能传 page、size。")

@@ -1,411 +1,115 @@
-# 数码商城AI购物助手
+# Shopping Agent Plus · 购物 Agent 可靠性改造
 
-一个前后端分离的**数码商城 + AI 购物助手**项目。后端提供商品、购物车、订单等标准电商能力，并在其上叠加一层由大模型驱动的导购助手：支持流式对话、Tool Calling（工具调用）与混合 RAG（向量检索 + 数据库实时回查），让用户可以直接用自然语言完成「找商品 → 看库存 → 加购物车 → 生成订单预览」的完整链路。
+> 基于 [xinconner/shopping-agent-ai](https://github.com/xinconner/shopping-agent-ai) 的二次开发项目，感谢原作者 xinconner。本仓库重点展示在已有商城与 AI 购物助手基础上完成的三项自主改造：**购物任务可追踪、失败可恢复；订单预览与用户确认闭环；Agent 工程验证与业务完整性评价体系。**
 
-项目同时作为 **Spring Boot 4 + Spring AI 2.0** 的工程化实践样板，重点演示在真实业务里如何约束 AI 的边界：AI 只能做**只读查询**和**购物车、订单预览**这类可回滚的写操作，**下单确认与支付始终由用户在前端显式触发**。
+商城基础、Spring AI 工具调用、SSE、RAG 和会话记忆沿用原项目。本文按照“问题 → 方法 → 效果”说明本 Fork 的增量，详细归属见 [来源与贡献边界](docs/attribution.md)。
 
----
+[架构设计](docs/architecture.md) · [运行指南](docs/running.md) · [数据库迁移](docs/database-migrations.md) · [实验结果](docs/experiments.md) · [GitHub 整理指南](docs/github-publishing.md)
 
-## 主要功能
+## 改造总览
 
-### 商城业务
+| 改造 | 要解决的问题 | 主要增量 | 验证依据 |
+|---|---|---|---|
+| ① 购物任务可追踪、失败可恢复 | 断线后无法判断操作结果，重新执行可能重复加购 | 稳定请求身份、任务/步骤持久化、业务幂等、对账与原步骤恢复 | 8 并发、响应丢失、事务回滚、权限和恢复上限测试 |
+| ② 订单预览与用户确认闭环 | 原预览与最终成交缺乏持久关联，确认重试结果不确定 | MySQL 快照与指纹、显式确认、锁定重校验、原子提交与结果回放 | 23 项订单确认集成测试及浏览器确认路径 |
+| ③ Agent 工程验证与业务完整性评价体系 | 接口或模型回复成功无法证明业务数据正确 | 16 类场景、独立 SQL 判定、7 类负对照、统一脚本及基线报告 | 两轮相同配置：每轮 48/48 场景样本、156/156 后端测试 |
 
-| 模块 | 功能 | 说明 |
-| --- | --- | --- |
-| 用户认证 | 注册 / 登录 / 查询当前用户 | 密码 BCrypt 加密存储，登录签发 JWT，全站无状态认证 |
-| 商品 | 分页列表、详情查询 | 支持品牌、价格区间、关键词等条件筛选，仅返回上架商品 |
-| 购物车 | 增 / 删 / 改 / 查 / 清空 | 按用户隔离，商品维度唯一约束，含数量上限校验 |
-| 订单 | 订单预览 → 确认下单 → 支付 / 取消 | 预览不扣库存；确认后扣减库存；支付超时自动关单并归还库存 |
+## 原项目提供的基础
 
-### AI 购物助手
+原项目已有登录认证、商品、购物车、订单和前后端页面，以及 Spring AI 原生工具调用、混合 RAG、Redis 会话记忆和基本工具权限约束。用户确认下单、模型不直接支付的设计也已存在；本次第二项改造重点是持久化、内容绑定、事务一致性与异常恢复，不能表述为首次引入用户确认。
 
-| 能力 | 说明 |
-| --- | --- |
-| 流式对话 | 基于 SSE（`text/event-stream`）逐字返回，含文本增量、工具调用、引用来源、错误等事件类型 |
-| Tool Calling | 单次请求动态注册 6 个原生工具，模型自主决定调用时机 |
-| 混合 RAG | Milvus 负责语义召回，召回结果再由 MySQL 实时回查价格、库存、上架状态，避免「向量库数据过期」导致的错误报价 |
-| 会话记忆 | 基于 Redis 按用户隔离的多轮上下文，滑动窗口 + TTL 过期，Redis 不可用时自动降级为无历史模式 |
-| 事实校验 | 模型输出经过二次校验，未命中的商品 / 库存信息会被拦截或修正，降低幻觉 |
-| 调用审计 | 每次工具调用落审计记录，校验商品 ID 是否在本次检索结果白名单内 |
-| 幂等保护 | 购物车写操作按「操作指纹」幂等，模型重复调用不会造成重复加购 |
+沿用技术：Java 21、Spring Boot、Spring AI、MyBatis-Plus、MySQL、Redis、Milvus，以及 Vue 3、TypeScript、Vite。依赖版本以 [pom.xml](project-backend/pom.xml)、[package.json](project-frontend/package.json) 与 [pnpm-lock.yaml](project-frontend/pnpm-lock.yaml) 为准。
 
-### AI 可用工具清单
+## 改造一：购物任务可追踪、失败可恢复
 
-| 工具 | 类型 | 用途 |
-| --- | --- | --- |
-| `HybridRagTool` | 只读 | 检索商品与知识资料，返回经 MySQL 回查的商品事实 |
-| `ProductDetailTool` | 只读 | 查询单个在售商品的最新详情、价格、规格、库存 |
-| `InventoryTool` | 只读 | 查询商品当前可用库存 |
-| `OrderQueryTool` | 只读 | 查询当前用户自己的订单列表 / 订单详情 |
-| `CartTool` | 可写 | 查看或修改当前登录用户的购物车（仅 `get` / `add` / `update` / `remove`） |
-| `OrderPreviewTool` | 可写 | 基于购物车生成**不扣库存**的订单预览，不能确认订单 |
+**问题。** 工具执行成功但流式连接中断时，用户无法确认是否已经加购；重新请求可能再次进入模型规划。内存审计和日志不足以支撑刷新后的状态查询，更不能将异常直接解释为“没有副作用”。
 
----
+**方法。** 前端为一次主动请求生成稳定 `clientRequestId`，重试复用原身份；后端以用户和请求标识唯一约束取得任务执行权，保存任务、步骤参数、执行结果及最终回复。购物车操作记录与业务修改同事务提交。查询先按业务记录对账，已成功的操作直接返回结果；未完成步骤仅在符合资格、用户确认原写操作后按保存参数恢复，不重新调用模型规划。
 
-## 技术栈
+**效果。** 阶段验收完成 70 项后端测试；8 个并发同请求仅一个取得执行权。提交后响应丢失与恢复响应丢失场景均保持单次业务写入，并通过浏览器查询、恢复和刷新路径验证。详见 [阶段报告](project-backend/verification/task-recovery-final-2026-11-26.json)。
 
-### 后端
+**实现入口：** [JdbcAgentRunService](project-backend/src/main/java/com/example/service/ai/impl/JdbcAgentRunService.java)、[AgentStepReconciler](project-backend/src/main/java/com/example/service/ai/impl/AgentStepReconciler.java)、[AgentRecoveryService](project-backend/src/main/java/com/example/service/ai/impl/AgentRecoveryService.java)、[AI 页面](project-frontend/src/pages/AiAssistantPage.vue)，迁移 V8–V10。
 
-| 分类 | 技术 | 版本 |
-| --- | --- | --- |
-| 语言 / 运行时 | Java | 21 |
-| 框架 | Spring Boot | 4.1.1 |
-| AI 框架 | Spring AI（OpenAI 兼容接入） | 2.0.1 |
-| ORM | MyBatis-Plus（含 jsqlparser） | 3.5.17 |
-| 数据库 | MySQL | 8.x |
-| 数据库版本管理 | Flyway | 随 Boot 版本 |
-| 缓存 / 会话记忆 | Redis | 6.x+ |
-| 向量数据库 | Milvus | 2.x |
-| 安全 | Spring Security + JJWT | 0.12.6 |
-| 接口文档 | springdoc-openapi（Swagger UI） | 2.8.13 |
-| 其他 | Lombok、commons-lang3、spring-boot-starter-validation | — |
+**边界。** 每个步骤最多两次恢复尝试；不是任意任务自动恢复，也不是全系统 exactly-once。订单预览、下单和支付不由通用恢复器重做；原任务中断状态不会因单个步骤恢复而伪装成整段任务成功。
 
-### 前端
+## 改造二：订单预览与用户确认闭环
 
-| 分类 | 技术 | 版本 |
-| --- | --- | --- |
-| 框架 | Vue | 3.5 |
-| 语言 | TypeScript | 6.x |
-| 构建工具 | Vite | 8.x |
-| 状态管理 | Pinia | 3.x |
-| 路由 | Vue Router | 4.x |
-| UI 组件库 | Ant Design Vue（+ @ant-design/icons-vue） | 4.2 |
-| 请求 | Axios | 1.x |
-| 内容渲染 | marked + DOMPurify | — |
-| 包管理器 | pnpm | — |
-| Node | >= 24 < 25 | — |
+**问题。** 原预览依赖 Redis 生命周期，页面跳转后可能重新生成预览；用户无法持久查询原预览是否成交。价格校验与扣库存之间存在并发变化窗口，重复确认与响应丢失需要确定的成交依据。
 
-### AI 服务依赖
+**方法。** 将原预览保存为 MySQL 快照，记录用户、内容指纹、有效期、确认键和订单关联。AI 页面携带原 `draftId` 跳转；用户核对并显式确认后，服务端锁定草稿、购物车和商品，再次校验价格、数量与内容，在同一事务写订单/明细、扣库存、清购物车并绑定确认结果。确认响应丢失时先查原预览；同一草稿重复确认返回原订单。
 
-| 用途 | 服务 | 默认配置 |
-| --- | --- | --- |
-| 对话模型 | DeepSeek（OpenAI 兼容协议） | `base-url: https://api.deepseek.com`，`model: deepseek-v4-flash` |
-| 向量化模型 | 通义千问 Embedding（OpenAI 兼容协议） | 1024 维，`model: qwen3.7-text-embedding` |
-| 向量存储 | Milvus Collection：`phone_knowledge_1024` | 距离度量 COSINE |
+**效果。** 23/23 真实 MySQL 订单确认集成测试通过；8 并发同键或换键确认同一草稿均只生成一笔订单、扣一次库存。通过浏览器“确认成功响应丢失 → 查询找回 → 刷新仍为原订单”路径。阶段报告包含这 23 项及 50 项回归，不能与第三项测试总数相加。详见 [确认闭环报告](project-backend/verification/order-confirmation-2026-11-26.json)。
 
----
+**实现入口：** [OrderDraftStore](project-backend/src/main/java/com/example/service/order/impl/OrderDraftStore.java)、[JdbcOrderDraftService](project-backend/src/main/java/com/example/service/order/impl/JdbcOrderDraftService.java)、[OrderServiceImpl](project-backend/src/main/java/com/example/service/order/impl/OrderServiceImpl.java)、[订单页面](project-frontend/src/pages/OrdersPage.vue)，迁移 [V11](project-backend/src/main/resources/db/migration/V11__persist_order_confirmation.sql)。
 
-## 系统架构
+**边界。** 预览不预占库存，条件变化必须重新预览；确认只创建待支付订单。支付仍是已有的模拟业务，不代表真实支付渠道接入。
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                     浏览器（Vue 3 SPA）                       │
-│  HomePage · Login/Register · CartPage · OrdersPage ·         │
-│  AiAssistantPage（SSE 流式对话）                              │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ /api/**（Vite dev/preview 代理）
-┌───────────────────────────▼──────────────────────────────────┐
-│                    Spring Boot 4 应用                         │
-│                                                              │
-│  ┌───────────── 过滤器 / 安全层 ─────────────┐                │
-│  │ RequestTraceFilter → JwtAuthenticationFilter│              │
-│  │ SecurityConfig（无状态 JWT + 接口级授权）    │              │
-│  └────────────────────┬─────────────────────┘                │
-│                       │                                      │
-│  ┌────────────────────▼────────── Controller 层 ───────────┐ │
-│  │ AuthController · ProductController · CartController      │ │
-│  │ OrderController · AiController                           │ │
-│  └────────────────────┬─────────────────────────────────────┘ │
-│                       │                                      │
-│  ┌────────────────────▼────────── Service 层 ───────────────┐ │
-│  │ 商城域：Auth / Product / Cart / Order                    │ │
-│  │   · OrderDraftService   订单预览草稿（Redis，TTL 10m）    │ │
-│  │   · OrderCloseScheduler 支付超时扫描关单                  │ │
-│  │   · 幂等服务（购物车操作 / 订单）                          │ │
-│  ├──────────────────────────────────────────────────────────┤ │
-│  │ AI 域：AiOrchestrationCore（同步/流式共用编排核心）        │ │
-│  │   AiPromptBuilder → 身份边界 + 系统提示词                 │ │
-│  │   NativeToolSet   → 单请求级 6 个原生 Tool                │ │
-│  │   AuditedToolCallback → 工具调用审计                      │ │
-│  │   AiGroundingValidator / AiStreamingGroundingGuard        │ │
-│  │        → 同步与流式两条链路共用同一套事实校验              │ │
-│  │   AiResponseAssembler → 组装响应 + 写入会话记忆            │ │
-│  └────────────────────┬─────────────────────────────────────┘ │
-└───────────────────────┼──────────────────────────────────────┘
-        ┌───────────────┼────────────────┬──────────────┐
-        ▼               ▼                ▼              ▼
-   ┌─────────┐   ┌────────────┐   ┌──────────┐   ┌─────────────┐
-   │  MySQL  │   │   Redis    │   │  Milvus  │   │ LLM 服务    │
-   │ 业务数据 │   │ 会话记忆    │   │ 语义召回  │   │ DeepSeek    │
-   │ Flyway  │   │ 草稿/幂等   │   │ 1024 维  │   │ + Embedding │
-   └─────────┘   └────────────┘   └──────────┘   └─────────────┘
+## 改造三：Agent 工程验证与业务完整性评价体系
+
+**问题。** 分散的接口测试不能回答一次购物任务是否符合预期。即使模型声称完成，也可能出现错误商品、金额不符、重复扣库存、越权修改或执行记录缺失。
+
+**方法。** 建立版本化场景集，通过真实业务工具与隔离 MySQL 执行；独立核对订单金额和快照、购物车商品与数量、库存守恒、用户隔离及持久化执行轨迹。使用故意制造错误状态的负对照验证评分器，再由统一入口汇总 JUnit、来源摘要和清理结果，输出 JSON/Markdown 与兼容基线比较。缺失样本、跳过测试、源码变化或环境清理失败都会使门禁失败。
+
+**效果。** 最终两轮相同配置均通过。评测还发现并修复了“工具已明确返回库存不足，正确解释却被事实校验器误拒”的缺陷；新增定向回归，拒绝结果不能被用来编造库存数量或售价。
+
+| 实测项目（2026-11-27） | 每轮结果 | 含义 |
+|---|---|---|
+| 场景样本 | 48/48 | 16 类场景各运行 3 次 |
+| 恢复场景 | 6/6 | 已包含在 48 个样本中 |
+| 后端测试 | 156/156 | 已包含 48 个场景样本与 7 个业务评分负对照 |
+| 报告器测试 | 12/12 | 验证缺失证据、错误判定和失败门禁 |
+| 前端 | 类型检查、生产构建通过 | 不是浏览器交互测试 |
+| 数据库 | MySQL 8.0.46、V1–V11 | 独立临时实例，测试后停止并清理 |
+
+**实现入口：** [场景集](project-backend/src/test/resources/evaluation/shopping-scenarios.json)、[AgentBusinessEvaluationIT](project-backend/src/test/java/com/example/service/ai/impl/AgentBusinessEvaluationIT.java)、[BusinessIntegrityOracle](project-backend/src/test/java/com/example/service/ai/impl/BusinessIntegrityOracle.java)、[一键入口](project-backend/scripts/run-agent-evaluation.ps1)。
+
+[最终报告](project-backend/verification/agent-evaluation-2026-11-27.md) · [逐样本 JSON](project-backend/verification/agent-evaluation-2026-11-27.json) · [同配置基线](project-backend/verification/agent-evaluation-baseline-2026-11-27.json) · [指标定义与复现说明](docs/agent-engineering-evaluation.md)
+
+**边界。** 本轮为 scripted 工程实验：工具计划由场景提供，业务执行真实。真实模型 live 入口已实现但未配置运行，不能将 48/48 写成“模型购物成功率 100%”。RAG、长对话、生产负载与生产 JWT 全链路不属于这些数字的覆盖范围。
+
+## 架构概览
+
+```mermaid
+flowchart LR
+    UI[已有 Vue 商城与 AI 页面] --> CORE[已有后端与 AI 编排核心]
+    CORE --> TOOLS[已有业务工具与商城服务]
+    CORE --> RUN[改造一：任务追踪与原步骤恢复]
+    TOOLS --> DRAFT[改造二：持久预览与确认事务]
+    RUN --> DB[(MySQL)]
+    DRAFT --> DB
+    EVAL[改造三：场景执行与业务评分] -. 验证 .-> CORE
+    EVAL --> REPORT[测试报告与基线比较]
 ```
 
-**两个关键设计点：**
+完整组件关系、故障恢复及确认时序见 [架构设计](docs/architecture.md)。
 
-1. **同步与流式共用一条编排链路** —— 提示词构建、Tool 注册、身份边界、事实校验都收敛在 `AiOrchestrationCore` 中，同步走 `.call()`、流式走 `.stream()`，流式接口无法绕过事实校验另起炉灶。
-2. **身份只来自服务端上下文** —— 工具的 `userId` 一律从 `ToolContext` 读取并与当前登录用户比对，模型既拿不到、也无法伪造用户身份；结合检索白名单，从结构上堵死越权查询。
+## 快速验证
 
----
+不需要真实模型密钥即可运行工程验收；需要本机 JDK 21、Maven 3.9+、MySQL 8.0、Python 3.9+、Node 24 与 pnpm，首次运行需准备依赖。
 
-## 项目结构
-
-```
-shopping-agent-ai/
-├── README.md
-├── project-backend/                     # Spring Boot 后端
-│   ├── pom.xml
-│   └── src/main/
-│       ├── java/com/example/
-│       │   ├── ShoppingAgentApplication.java
-│       │   ├── ai/                      # AI 能力层
-│       │   │   ├── config/              # ChatClient 装配
-│       │   │   ├── memory/              # Redis 会话记忆（接口 + 实现）
-│       │   │   ├── model/               # Tool 请求 / 响应模型
-│       │   │   ├── rag/                 # 混合 RAG、知识入库
-│       │   │   └── tool/                # 4 个原生 Tool + 只读策略
-│       │   ├── common/                  # 统一响应、请求上下文常量
-│       │   ├── config/                  # Security / MyBatis-Plus / OpenAPI / 定时任务
-│       │   ├── controller/              # Auth / Product / Cart / Order / Ai
-│       │   ├── dto/                     # 分域 Request / Response
-│       │   ├── entity/                  # 实体 + OrderStatus 枚举
-│       │   ├── exception/               # 业务异常 + 全局异常处理
-│       │   ├── filter/                  # 请求链路追踪
-│       │   ├── mapper/                  # MyBatis-Plus Mapper
-│       │   ├── security/                # JWT 签发 / 校验 / 认证失败处理
-│       │   ├── service/                 # auth / product / cart / order / ai
-│       │   └── utils/                   # 共享常量
-│       └── resources/
-│           ├── application.yml          # 数据源、Flyway、AI、JWT、订单策略
-│           ├── application-dev.yml      # dev profile
-│           ├── db/migration/            # Flyway V1 ~ V7
-│           └── rag/                     # 知识库文档（6 篇 txt）
-│
-└── project-frontend/                    # Vue 3 前端
-    ├── package.json
-    ├── vite.config.ts                   # 别名 @、/api 代理
-    ├── .env.example                     # 环境变量模板
-    ├── index.html
-    └── src/
-        ├── api/                         # axios 实例 + 各业务域接口
-        ├── assets/                      # 全局样式
-        ├── layouts/                     # AppLayout 应用骨架
-        ├── pages/                       # 首页 / 登录 / 注册 / 购物车 / 订单 / AI 助手
-        ├── router/                      # 路由表
-        ├── stores/                      # Pinia 状态
-        ├── types/                       # TS 类型定义
-        └── utils/                       # markdown 渲染、token 存储
+```powershell
+# 在仓库根目录开始
+Set-Location project-frontend
+pnpm install --frozen-lockfile
+Set-Location ../project-backend
+./scripts/run-agent-evaluation.ps1 -JavaHome '<JDK 21 的安装目录>'
 ```
 
----
+报告写到 `project-backend/target/agent-evaluation-<运行ID>/`。可用 `-MavenCommand`、`-MySqlBin`、`-PythonCommand`、`-NodeCommand` 指定安装位置。完整商城运行还需 Redis、Milvus 和模型配置，步骤见 [运行指南](docs/running.md)。
 
-## 环境要求
+## 仓库导航
 
-| 依赖 | 版本 / 说明 |
-| --- | --- |
-| JDK | 21（后端编译目标为 Java 21） |
-| Maven | 3.9+ |
-| MySQL | 8.x，需提前创建数据库 `shopping_mall` |
-| Redis | 6.x+，默认 `localhost:6379`，无密码 |
-| Milvus | 2.x，默认 `localhost:19530`（可用 Docker 或 Milvus Lite 启动） |
-| Node.js | `>= 24 < 25` |
-| pnpm | 9+（项目使用 `pnpm-lock.yaml`） |
-| 网络 | 需能访问 DeepSeek 与通义千问 Embedding 的接口地址 |
-| API Key | `DEEPSEEK_API_KEY`、`QWEN_EMBEDDING_API_KEY` 各一份 |
-
-端口占用：后端 `8080`、前端 `5173`、MySQL `3306`、Redis `6379`、Milvus `19530`。
-
----
-
-## 环境配置
-
-### 1. 后端配置（`project-backend/src/main/resources/application.yml`）
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:mysql://localhost:3306/shopping_mall
-    username: root
-    password: 123456          # ← 改成自己的密码
-  flyway:
-    enabled: true             # 启动时自动执行 db/migration 下的迁移脚本
-  ai:
-    openai:
-      api-key: ${DEEPSEEK_API_KEY:}
-      base-url: https://api.deepseek.com
-      chat:
-        model: deepseek-v4-flash
-      embedding:
-        api-key: ${QWEN_EMBEDDING_API_KEY:}
-        base-url: https://ws-xppsn0j6du7g1eu4.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-        model: qwen3.7-text-embedding
-    vectorstore:
-      milvus:
-        client:
-          host: localhost
-          port: 19530
-        collection-name: phone_knowledge_1024
-        embedding-dimension: 1024
-        metric-type: COSINE
-  security:
-    jwt:
-      key: 'abcdefghijklmn'   # ← 生产环境务必替换为强随机密钥（至少 32 字符）
-      expire: 72              # Token 有效期（小时）
-
-app:
-  order:
-    payment-timeout: 30m      # 支付超时时间，超时自动关单
-    close-scan-delay: 1m      # 关单扫描间隔
-    draft-ttl: 10m            # 订单预览草稿有效期
+```text
+README.md                         # 来源、三项增量与实测效果
+ docs/                            # 架构、运行、迁移、实验、发布及归属
+ project-backend/
+   src/main/java/                 # 基础业务及改造实现
+   src/main/resources/db/migration/ # V1–V7 基础；V8–V11 改造
+   src/test/java/                 # 单元、数据库、场景与负对照测试
+   src/test/resources/evaluation/ # 固定场景定义
+   scripts/                       # 隔离 MySQL、评测与报告脚本
+   verification/                  # 已归档的实验报告与测试截图
+ project-frontend/src/            # 前端与任务恢复、原预览确认交互
 ```
 
-### 2. 环境变量
-
-两个 API Key 通过环境变量注入，不要写进配置文件：
-
-```bash
-export DEEPSEEK_API_KEY="你的 DeepSeek API Key"
-export QWEN_EMBEDDING_API_KEY="你的通义千问 Embedding API Key"
-```
-
-### 3. 前端配置（`project-frontend/.env`）
-
-复制 `.env.example` 为 `.env`，按需修改：
-
-```bash
-VITE_API_BASE_URL=/api                      # 浏览器侧请求前缀，配合代理保持 /api
-VITE_API_PROXY_TARGET=http://localhost:8080 # Vite dev/preview 的代理目标
-```
-
----
-
-## 快速启动
-
-### 1. 启动依赖中间件
-
-```bash
-# MySQL：创建数据库（表结构由 Flyway 自动迁移，无需手工建表）
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS shopping_mall DEFAULT CHARSET utf8mb4;"
-
-# Redis
-redis-server
-
-# Milvus（Docker 方式示例，端口需为 19530）
-docker run -d --name milvus-standalone -p 19530:19530 -p 9091:9091 milvusdb/milvus:latest
-```
-
-### 2. 启动后端
-
-```bash
-cd project-backend
-
-# 注入 API Key
-export DEEPSEEK_API_KEY="..."
-export QWEN_EMBEDDING_API_KEY="..."
-
-mvn spring-boot:run
-```
-
-启动时 Flyway 会自动执行 `V1` ~ `V7` 迁移脚本建表；知识入库服务会读取 `resources/rag/*.txt` 并写入 Milvus（首次启动耗时较长）。
-
-验证：
-- 接口文档：<http://localhost:8080/swagger-ui.html>
-- 商品列表：<http://localhost:8080/api/products>
-
-### 3. 启动前端
-
-```bash
-cd project-frontend
-pnpm install
-pnpm dev
-```
-
-打开 <http://localhost:5173>，先注册 / 登录，即可浏览商品、加购物车、下单，并在「AI 助手」页体验流式导购对话。
-
----
-
-## 生产构建
-
-### 后端
-
-```bash
-cd project-backend
-mvn clean package -DskipTests
-java -jar target/shopping-agent-ai-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
-```
-
-推荐通过环境变量覆盖敏感配置，而不是改 jar 内的 `application.yml`：
-
-```bash
-export SPRING_DATASOURCE_URL="jdbc:mysql://<host>:3306/shopping_mall"
-export SPRING_DATASOURCE_USERNAME="<user>"
-export SPRING_DATASOURCE_PASSWORD="<password>"
-export SPRING_AI_OPENAI_API_KEY="$DEEPSEEK_API_KEY"
-export SPRING_AI_VECTORSTORE_MILVUS_CLIENT_HOST="<milvus-host>"
-```
-
-### 前端
-
-```bash
-cd project-frontend
-pnpm build          # 等价于 vue-tsc 类型检查 + vite build
-pnpm preview        # 本地预览构建产物
-```
-
-产物在 `project-frontend/dist/`。生产环境建议：
-
-- 用 Nginx 托管 `dist/` 静态文件，并开启 SPA fallback（`try_files $uri $uri/ /index.html;`）。
-- 将 `/api` 反向代理到后端 `8080`，SSE 流式接口需关闭代理缓冲：
-
-```nginx
-location /api/ {
-    proxy_pass http://127.0.0.1:8080;
-    proxy_http_version 1.1;
-    proxy_set_header Connection '';
-    proxy_buffering off;          # 关键：否则流式输出会被攒批
-    proxy_read_timeout 300s;
-}
-```
-
----
-
-## 注意事项
-
-**安全相关**
-
-1. **务必更换 JWT 密钥** —— `spring.security.jwt.key` 默认值仅为占位，上线前必须替换为强随机密钥，否则 Token 可被伪造。
-2. **不要把 API Key 提交到仓库** —— 仓库根 `.gitignore` 已忽略 `.env` / `.env.*`，密钥请统一走环境变量注入。
-3. **数据库账号密码不要沿用默认值** —— `root/123456` 仅用于本地开发。
-4. **AI 不能直接成交** —— 设计上 AI 只具备只读查询 + 购物车修改 + 订单预览能力，**确认下单和支付必须由用户在前端显式操作**，避免模型幻觉造成真实扣款。
-5. **工具身份校验不可绕过** —— 用户 ID 一律从服务端 `ToolContext` 读取，模型传入的任何用户标识都不会被采信。
-
-**运行与依赖**
-
-6. **首次启动较慢属正常** —— Milvus 知识入库、Flyway 迁移都在启动阶段执行；知识文档是 6 个 txt 文件（`resources/rag/`），修改后重启即可重新入库。
-7. **RAG 有降级行为** —— Milvus 不可用时检索会抛 `RagUnavailableException` 并由上层兜底，AI 可能暂时无法回答商品相关问题，但不影响商城业务接口。
-8. **Redis 不可用时自动降级** —— 会话记忆会退化为无历史上下文（单轮对话）；订单预览草稿与幂等能力依赖 Redis，Redis 挂掉时相关功能不可用。
-9. **价格与库存以 MySQL 为准** —— Milvus 只负责语义召回，任何价格 / 库存结论都会实时回查数据库，排查「报价不一致」问题时优先看数据库。
-10. **接口权限分两类** —— `/api/auth/register`、`/api/auth/login`、`/api/products/**`、Swagger 相关路径免认证；`/api/auth/me`、`/api/cart/**`、`/api/orders/**`、`/api/ai/**` 均需携带 `Authorization: Bearer <token>`。
-
-**前端与部署**
-
-11. **Node 版本有硬约束** —— `package.json` 限定 `>= 24 < 25`，版本不符可能触发依赖引擎报错。
-12. **统一用 pnpm** —— 项目锁文件为 `pnpm-lock.yaml`，混用 npm / yarn 易造成依赖树不一致。
-13. **流式接口需关闭代理缓冲** —— SSE（`/api/ai/chat/stream`）在 Nginx 等代理后必须设置 `proxy_buffering off`，否则前端会「一次性输出」而不是逐字返回。
-14. **订单相关时限可调** —— 支付超时 30 分钟、草稿有效期 10 分钟，可通过 `app.order.*` 调整；关单扫描间隔越短，超时订单归还库存越及时。
-
----
-
-## 接口速览
-
-| 方法 | 路径 | 说明 | 认证 |
-| --- | --- | --- | --- |
-| POST | `/api/auth/register` | 用户注册 | 否 |
-| POST | `/api/auth/login` | 用户登录，返回 JWT | 否 |
-| GET | `/api/auth/me` | 查询当前用户信息 | 是 |
-| GET | `/api/products` | 商品分页列表 | 否 |
-| GET | `/api/products/{id}` | 商品详情 | 否 |
-| GET | `/api/cart` | 查询购物车 | 是 |
-| POST | `/api/cart/items` | 添加购物车项 | 是 |
-| PUT | `/api/cart/items/{productId}` | 修改购物车项数量 | 是 |
-| DELETE | `/api/cart/items/{productId}` | 移除购物车项 | 是 |
-| DELETE | `/api/cart` | 清空购物车 | 是 |
-| POST | `/api/orders/preview` | 生成订单预览（不扣库存） | 是 |
-| POST | `/api/orders/{draftId}/confirm` | 确认预览草稿并下单 | 是 |
-| POST | `/api/orders` | 直接下单 | 是 |
-| GET | `/api/orders` | 订单分页列表 | 是 |
-| GET | `/api/orders/{id}` | 订单详情 | 是 |
-| POST | `/api/orders/{id}/pay` | 支付订单 | 是 |
-| POST | `/api/orders/{id}/cancel` | 取消订单 | 是 |
-| POST | `/api/ai/chat` | AI 对话（同步返回） | 是 |
-| POST | `/api/ai/chat/stream` | AI 对话（SSE 流式返回） | 是 |
+[历史阶段记录](docs/history/implementation-notes.md)保留当时的实现和验收范围；其中过时配置不作为当前启动指南。原作者与许可状态说明见 [来源与贡献边界](docs/attribution.md)。

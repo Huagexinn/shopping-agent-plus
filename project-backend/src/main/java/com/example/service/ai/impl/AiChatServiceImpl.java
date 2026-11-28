@@ -31,6 +31,7 @@ public class AiChatServiceImpl implements AiChatService {
     @Override
     public AiChatResponse chat(Long userId, AiChatRequest request) {
         AiOrchestrationCore.Prepared prepared = core.prepare(userId, request);
+        if (prepared.replay() != null) return prepared.replay();
         long modelStartedAt = System.nanoTime();
         try {
             ChatClientResponse clientResponse = modelGateway.call(core.buildSpec(prepared));

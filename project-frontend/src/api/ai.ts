@@ -7,9 +7,29 @@ import type {
   AiStreamMeta,
   AiStreamReplace,
   ApiResponse,
+  AgentRunResponse,
 } from '@/types/api'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api'
+
+export async function getAgentRun(clientRequestId: string): Promise<AgentRunResponse> {
+  const { data } = await http.get<ApiResponse<AgentRunResponse>>(`/ai/runs/${encodeURIComponent(clientRequestId)}`)
+  if (data.code !== 0 || !data.data) throw new Error(data.message || '无法查询执行记录')
+  return data.data
+}
+
+export async function recoverAgentStep(clientRequestId: string, sequence: number): Promise<AgentRunResponse> {
+  const { data } = await http.post<ApiResponse<AgentRunResponse>>(
+    `/ai/runs/${encodeURIComponent(clientRequestId)}/steps/${sequence}/recover`, { confirmed: true }, { timeout: 35_000 })
+  if (data.code !== 0 || !data.data) throw new Error(data.message || '恢复结果尚未取得，请查询原任务')
+  return data.data
+}
+
+export async function getAgentRuns(conversationId: string): Promise<AgentRunResponse[]> {
+  const { data } = await http.get<ApiResponse<AgentRunResponse[]>>('/ai/runs', { params: { conversationId } })
+  if (data.code !== 0 || !data.data) throw new Error(data.message || '无法查询执行记录')
+  return data.data
+}
 
 /** 提交 AI 聊天与安全购物编排请求。 */
 export async function sendAiChat(request: AiChatRequest): Promise<ApiResponse<AiChatResponse>> {

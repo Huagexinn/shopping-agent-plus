@@ -9,5 +9,10 @@ public record CartToolResult(
         String operation,
         String message,
         CartResponse cart,
-        Long changedProductId) {
+        Long changedProductId,
+        String failureType) {
+    public CartToolResult(String toolName, boolean success, String operation, String message,
+                          CartResponse cart, Long changedProductId) {
+        this(toolName, success, operation, message, cart, changedProductId, success ? null : "UNKNOWN");
+    }
 }

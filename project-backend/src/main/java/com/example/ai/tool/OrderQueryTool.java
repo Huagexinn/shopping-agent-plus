@@ -55,7 +55,7 @@ public class OrderQueryTool {
                     ? "订单查询超时，请稍后重试"
                     : "订单查询暂不可用，请稍后重试";
             return new OrderQueryToolResult(TOOL_NAME, false, normalized.operation(), message,
-                    List.of(), null, normalized.page(), normalized.size(), 0);
+                    List.of(), null, normalized.page(), normalized.size(), 0, "SYSTEM_FAILURE");
         }
     }
 

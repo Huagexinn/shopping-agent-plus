@@ -1,0 +1,261 @@
+{
+  "verificationDate": "2026-11-26",
+  "timezone": "Asia/Shanghai",
+  "scope": "Shopping task tracing, committed-business reconciliation, bounded frozen-step recovery",
+  "mysqlVersion": "8.0.46",
+  "migrationsAppliedInIsolatedDatabase": "V1-V10",
+  "backendAutomatedTests": 70,
+  "browserAcceptancePaths": 1,
+  "mysqlSuites": [
+    {
+      "suite": "AgentRecoveryMysqlIT",
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 6.498,
+      "testNames": [
+        "recoveryResponseLostAfterCommitIsResolvedFromBusinessRecord",
+        "stockFailureRollsBackRealCartAndStopsRetries",
+        "productOffSaleIsRecheckedAtRecoveryTime",
+        "fingerprintMismatchDoesNotReuseOtherQuantityOrAllowRecovery",
+        "mvcRequiresLoginOwnershipAndConfirmation",
+        "concurrentRecoveryClaimsOneExecution",
+        "inventoryRecoveryPreservesKnownProductBoundary",
+        "corruptedBusinessResultIsNotReportedAsSuccess",
+        "orderPreviewAndUnknownToolsCannotBeReexecuted",
+        "otherUsersBusinessRecordIsNeverUsed",
+        "transientOrderQueryFailureRemainsRecoverableWithoutCrossingUserBoundary",
+        "activeTaskCannotBeRecovered",
+        "mvcRecoveryThenCartQueryShowsExactlyOneItemAndOriginalArguments",
+        "malformedSavedParametersCannotBeExecuted",
+        "missingBusinessRecordDoesNotInventFailureOrWriteOnGet",
+        "originalWriteNeedsConfirmationAndUsesOriginalIdentity",
+        "unknownEarlierStepBlocksLaterRecovery",
+        "commitThenCrashBeforeAuditIsReconciledWithoutAnotherWrite",
+        "successfulReadRecoveryUsesSavedProductAndDoesNotWriteCart",
+        "transientReadFailuresHaveDurableTwoAttemptLimit",
+        "staleRecoveryLeaseCanResumeButLateFailureCannotOverwriteSuccess"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-d141e1538b0f441f939a93d705fffac4",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "AgentRecoveryMysqlIT",
+        "port": 60210,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T16:26:42.8321969+08:00"
+      }
+    },
+    {
+      "suite": "AgentRunMysqlIT",
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 2.94,
+      "testNames": [
+        "identitiesAreCaseSensitive",
+        "streamCompletionStoresFailureBeforeEmittingTerminalEvent",
+        "streamCancellationPersistsInterruption",
+        "usersCannotReadOrMutateOtherUsersRuns",
+        "auditPersistsIntentBeforeExecutionAndUnknownOnFailure",
+        "expiredHeartbeatIsInterruptedWithoutAutomaticTakeover",
+        "concurrentSubmissionsHaveOneOwner",
+        "savedResponseSurvivesNewInstanceAndBothDriversSkipModel",
+        "lateCommittedToolResultIsRetainedAfterInterruption",
+        "interruptedRunIsNotReexecutedAndNewToolsAreFenced",
+        "payloadAndConversationAreBoundToIdentity",
+        "failedModelResponseIsPersistedAndReplayedWithoutSecondCall",
+        "heartbeatKeepsLiveRunQueryable",
+        "streamPersistenceFailureTerminatesInsteadOfHangingOrClaimingSuccess"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-17c0ee72de564f8a8d233aaf8fb1dee8",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "AgentRunMysqlIT",
+        "port": 57875,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T16:23:04.3797777+08:00"
+      }
+    },
+    {
+      "suite": "CartOperationMysqlIT",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 2.027,
+      "testNames": [
+        "systemFailureRollsBackBothOperationAndCart",
+        "businessFailureRollsBackBothOperationAndCartThenAllowsRetry",
+        "operationKeysAreUserScopedAndCaseSensitive",
+        "concurrentDuplicatesCommitExactlyOneWrite",
+        "lostResponseAndNewServiceInstanceReuseCommittedResultWithoutRedis",
+        "changedFingerprintDoesNotWriteAgain"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-e5d60d11e63e49feba8f4eb12024734d",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "CartOperationMysqlIT",
+        "port": 58155,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T16:23:12.8733923+08:00"
+      }
+    },
+    {
+      "suite": "AgentRecoveryBrowserIT",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 199.434,
+      "testNames": [
+        "browserRecoveryAcceptance"
+      ],
+      "evidenceDirectory": "D:\\houduan\\shopping-agent\\project-backend\\target\\mysql-validation-f706fed93d344f33969023d19f8412a3",
+      "cleanup": {
+        "mysqlVersion": "8.0.46",
+        "testClass": "AgentRecoveryBrowserIT",
+        "port": 49676,
+        "verifiedIsolatedInstance": true,
+        "testExitCode": 0,
+        "serverStopped": true,
+        "temporaryDataRemoved": true,
+        "failureMessage": null,
+        "cleanupError": null,
+        "completedAt": "2026-11-26T16:20:47.0094079+08:00"
+      }
+    }
+  ],
+  "unitRegression": [
+    {
+      "suite": "com.example.service.ai.impl.AiRequestIdentityTest",
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.service.ai.impl.CartRequestRetryTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.ai.tool.support.NativeToolPolicyTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.service.ai.impl.AiGroundingValidatorTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.example.ai.tool.CartToolGovernanceTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "measurements": {
+    "taskOwners": 1,
+    "concurrentTaskRequests": 8,
+    "concurrentRecoveryRequests": 8,
+    "recoveryExecutors": 1,
+    "afterBrowserRecovery": {
+      "cartQuantity": 1,
+      "productStock": 10,
+      "operationRecords": 1
+    },
+    "maxRecoveriesPerStep": 2
+  },
+  "frontend": {
+    "command": "pnpm run build",
+    "screenshots": [
+      "project-backend/verification/recovery-browser-step.jpg",
+      "project-backend/verification/recovery-browser-cart.jpg"
+    ],
+    "typeCheckPassed": true,
+    "productionBuildPassed": true
+  },
+  "limits": [
+    "Existing business database not migrated",
+    "Browser uses real frontend, MVC, cart service and MySQL with a loopback HTTP adapter and test login identity",
+    "No live LLM or production JWT acceptance",
+    "Recovery executes saved steps only; no automatic model replanning",
+    "Order preview, order confirmation and payment are excluded",
+    "Fault injection simulates post-commit/result-loss boundaries; no OS process-kill experiment"
+  ],
+  "sourceHashes": [
+    {
+      "path": "project-backend/src/main/java/com/example/ai/tool/support/CartOperationIdentity.java",
+      "sha256": "20b5fe890a9dc26834d91aeb965f35f0a331820164ae11bbe396e5ae9078bed7"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/AgentStepReconciler.java",
+      "sha256": "28298e14a6072c2031388280998692b85040949e6d8bdd3633b2e756b9e5a2fc"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/AgentRecoveryService.java",
+      "sha256": "f7c1b506c9b798e83e0a5472a4f0daa74461628f63d64b10959c8365978a69a4"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/FrozenToolExecutor.java",
+      "sha256": "6e89a420efa79b7c2a3965948ad10ce478c120e90ebb41d45c5bbc213e46e533"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/service/ai/impl/JdbcAgentRunService.java",
+      "sha256": "801f0f203cc9b68bdb2255d1d63b23af3d4807bde8c3a46abe9059463809af98"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/ai/tool/CartTool.java",
+      "sha256": "262c759f3fd29a94c0a348bfd7cfde62d24f4cf4cc12d8655af414a061984f50"
+    },
+    {
+      "path": "project-backend/src/main/java/com/example/ai/tool/OrderQueryTool.java",
+      "sha256": "1cefbd193592551ad9d1a17855d43d7d743d660e52056cec30738b83d6258062"
+    },
+    {
+      "path": "project-backend/src/main/resources/db/migration/V10__create_agent_step_recovery.sql",
+      "sha256": "5e7953873d63322da7a0add09266d002ad37e63a3dcb638b5498adb046705830"
+    },
+    {
+      "path": "project-backend/src/test/java/com/example/service/ai/impl/AgentRecoveryMysqlIT.java",
+      "sha256": "b137de2fc00e1305595b42a16433e75395678b2aa6b299fe594c320f3ce20730"
+    },
+    {
+      "path": "project-backend/src/test/java/com/example/service/ai/impl/AgentRecoveryBrowserIT.java",
+      "sha256": "36ed22c13297c360a74f8c3336be66e2609404976d996addcc9da43e3f78e991"
+    },
+    {
+      "path": "project-backend/scripts/test-cart-mysql.ps1",
+      "sha256": "b80c0b07bf0fd2411caf4eb4122514ccc3e556b37522f7aa0414a7ec9f4e7440"
+    },
+    {
+      "path": "project-frontend/src/pages/AiAssistantPage.vue",
+      "sha256": "21cbbde7591844c2d315c8b2f47ed0a501c5782d30399a746db4fcfd4f72dea3"
+    }
+  ]
+}

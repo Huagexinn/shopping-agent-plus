@@ -15,7 +15,12 @@ public record OrderQueryToolResult(
         OrderResponse order,
         long page,
         long size,
-        long total) {
+        long total,
+        String failureType) {
+    public OrderQueryToolResult(String toolName, boolean success, String operation, String message,
+                                List<OrderSummaryResponse> orders, OrderResponse order, long page, long size, long total) {
+        this(toolName, success, operation, message, orders, order, page, size, total, success ? null : "BUSINESS_FAILURE");
+    }
     public OrderQueryToolResult {
         orders = orders == null ? List.of() : List.copyOf(orders);
     }

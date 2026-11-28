@@ -106,6 +106,7 @@ public class CartOperationIdempotencyServiceImpl
 
         TransactionTemplate template =
                 new TransactionTemplate(transactionManager);
+        template.setTimeout(30);
 
         // 确保操作记录和购物车修改在一个独立事务中完成
         template.setPropagationBehavior(

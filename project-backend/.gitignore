@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Python evaluation tooling ###
+__pycache__/
+*.pyc

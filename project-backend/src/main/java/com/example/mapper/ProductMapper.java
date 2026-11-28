@@ -5,12 +5,15 @@ import com.example.entity.ProductEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
+import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
 
 /** 手机商品数据访问接口。 */
 @Mapper
 public interface ProductMapper extends BaseMapper<ProductEntity> {
+    @Select("SELECT * FROM products WHERE id=#{productId} AND deleted=0 FOR UPDATE")
+    ProductEntity selectByIdForUpdate(@Param("productId") Long productId);
     /** 按实时库存条件扣减商品库存，返回 1 才表示扣减成功；非法数量不会执行更新。 */
     @Update("""
             UPDATE products

@@ -7,6 +7,12 @@ import com.example.dto.ai.Response.AiChatResponse;
 import com.example.dto.ai.Response.AiStreamEventResponse;
 import com.example.exception.UnauthorizedException;
 import com.example.service.ai.AiChatService;
+import com.example.service.ai.AgentRunService;
+import com.example.dto.ai.Response.AgentRunResponse;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
+import java.util.List;
 import com.example.service.ai.impl.AiChatStreamDriver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -32,6 +38,37 @@ public class AiController {
     private AiChatService aiChatService;
     @Resource
     private AiChatStreamDriver aiChatStreamDriver;
+    @Resource
+    private AgentRunService agentRunService;
+    @Resource
+    private com.example.service.ai.impl.AgentRecoveryService agentRecoveryService;
+
+    public record RecoveryRequest(boolean confirmed) {}
+
+    @PostMapping("/runs/{clientRequestId}/steps/{sequence}/recover")
+    @Operation(summary = "核对后按保存的原参数恢复指定步骤，最多两次，不重新调用模型")
+    public ApiResponse<AgentRunResponse> recover(
+            @RequestAttribute(value = Const.ATTR_USER_ID, required = false) Long userId,
+            @PathVariable String clientRequestId, @PathVariable int sequence,
+            @RequestBody RecoveryRequest request) {
+        return ApiResponse.success(agentRecoveryService.recover(requireUserId(userId), clientRequestId, sequence, request.confirmed()));
+    }
+
+    @GetMapping("/runs/{clientRequestId}")
+    @Operation(summary = "查询本人请求的执行状态、步骤和已保存结果")
+    public ApiResponse<AgentRunResponse> run(
+            @RequestAttribute(value = Const.ATTR_USER_ID, required = false) Long userId,
+            @PathVariable String clientRequestId) {
+        return ApiResponse.success(agentRunService.find(requireUserId(userId), clientRequestId));
+    }
+
+    @GetMapping("/runs")
+    @Operation(summary = "查询本人会话最近 20 次执行记录")
+    public ApiResponse<List<AgentRunResponse>> runs(
+            @RequestAttribute(value = Const.ATTR_USER_ID, required = false) Long userId,
+            @RequestParam String conversationId) {
+        return ApiResponse.success(agentRunService.recent(requireUserId(userId), conversationId));
+    }
 
     @PostMapping("/chat")
     @Operation(summary = "AI 聊天与购物编排",

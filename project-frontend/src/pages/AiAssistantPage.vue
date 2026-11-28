@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { isAxiosError } from 'axios'
 import { message } from 'ant-design-vue'
 import {
   CheckCircleOutlined,
@@ -21,10 +20,10 @@ import {
   ArrowRightOutlined,
 } from '@ant-design/icons-vue'
 import AppLayout from '@/layouts/AppLayout.vue'
-import { sendAiChat, streamAiChat } from '@/api/ai'
+import { getAgentRun, getAgentRuns, recoverAgentStep, streamAiChat } from '@/api/ai'
 import { getToken } from '@/utils/storage'
 import { renderMarkdown } from '@/utils/markdown'
-import type { AiChatRequest, AiChatResponse } from '@/types/api'
+import type { AiChatRequest, AiChatResponse, AgentRunResponse } from '@/types/api'
 
 type TurnStatus = 'sending' | 'success' | 'error'
 
@@ -39,14 +38,18 @@ interface ChatTurn {
    * 后端保证 final.message 是权威文本：正常时逐字等于流式拼接结果，事实校验拒绝时就是替换文本。
    */
   streamedText: string
-  /** 是否走了同步降级，用于在回复下方给一条温和提示。 */
+  /** 是否从已保存的结果恢复。 */
   degraded: boolean
+  run?: AgentRunResponse
+  querying?: boolean
   error: string | null
 }
 
 const router = useRouter()
 const isLoggedIn = computed(() => Boolean(getToken()))
-const conversationId = ref(createConversationId())
+const conversationStorageKey = 'shopping-agent-active-conversation'
+const conversationId = ref(sessionStorage.getItem(conversationStorageKey) || createConversationId())
+sessionStorage.setItem(conversationStorageKey, conversationId.value)
 const turns = ref<ChatTurn[]>([])
 const expandedTurn = ref<string | null>(null)
 const chatScroll = ref<HTMLElement | null>(null)
@@ -57,7 +60,7 @@ const quickPrompts = [
   '推荐 3000 元以内、12GB+256GB 的手机',
   '预算充足，哪款 iPhone 最值得买？',
 ]
-const draft = reactive<AiChatRequest>({
+const draft = reactive<Pick<AiChatRequest, 'conversationId' | 'message'>>({
   conversationId: conversationId.value,
   message: '',
 })
@@ -78,6 +81,7 @@ function newConversation() {
   abortInFlight()
   const nextConversationId = createConversationId()
   conversationId.value = nextConversationId
+  sessionStorage.setItem(conversationStorageKey, nextConversationId)
   draft.conversationId = nextConversationId
   draft.message = ''
   turns.value = []
@@ -85,6 +89,79 @@ function newConversation() {
 }
 
 onBeforeUnmount(abortInFlight)
+
+onMounted(async () => {
+  if (!isLoggedIn.value) return
+  const currentConversation = conversationId.value
+  try {
+    const runs = await getAgentRuns(currentConversation)
+    if (conversationId.value !== currentConversation || turns.value.length) return
+    turns.value = [...runs].reverse().map((run) => ({
+      id: run.clientRequestId, createdAt: run.createdAt,
+      request: { clientRequestId: run.clientRequestId, conversationId: run.conversationId, message: run.userMessage },
+      status: run.response?.resultStatus === 'SUCCESS' ? 'success' : 'error',
+      response: run.response, streamedText: run.response?.message || '',
+      degraded: Boolean(run.response), run, error: runNotice(run),
+    }))
+    await scrollToLatest()
+  } catch {
+    message.warning('暂时无法恢复会话记录，可稍后刷新查询')
+  }
+})
+
+function runNotice(run: AgentRunResponse) {
+  if (run.steps.some((step) => step.recovering)) return '正在恢复原步骤，请稍后查询结果。'
+  if (run.status === 'RUNNING') return '请求仍在执行，请稍后查询结果。'
+  if (run.steps.some((step) => step.status === 'UNKNOWN')) return '部分结果尚未核实。请先核对购物车；支持恢复的步骤可确认原操作后重试。'
+  if (run.steps.some((step) => step.resultSource !== 'TOOL_EXECUTION')) return '执行结果已更新，请以步骤结果为准；原回复保留用于核对，未重新执行整段任务。'
+  if (run.status === 'INTERRUPTED') return '执行已中断，已完成的操作不会自动撤销，请查看执行步骤。'
+  return run.response?.resultStatus === 'SUCCESS' ? null : run.response?.message || '执行失败，请查看执行步骤。'
+}
+
+function applyRun(id: string, run: AgentRunResponse) {
+  updateTurn(id, { run, response: run.response, streamedText: run.response?.message || '',
+    status: run.response?.resultStatus === 'SUCCESS' ? 'success' : 'error',
+    degraded: Boolean(run.response), error: runNotice(run) })
+}
+
+async function retryStep(id: string, sequence: number) {
+  const turn = turns.value.find((item) => item.id === id)
+  if (!turn || turn.querying) return
+  updateTurn(id, { querying: true })
+  try {
+    applyRun(id, await recoverAgentStep(turn.request.clientRequestId, sequence))
+  } catch {
+    // 恢复请求本身也可能丢失响应；只查结果，不递归重试写操作。
+    try { applyRun(id, await getAgentRun(turn.request.clientRequestId)) }
+    catch { updateTurn(id, { error: '尚未取得恢复结果，请稍后查询原任务，不要重新加购。' }) }
+    message.warning('恢复请求未正常返回，请查看最新步骤状态；正在执行、业务条件不满足或次数耗尽的步骤不会重做。')
+  } finally {
+    updateTurn(id, { querying: false })
+  }
+}
+
+function runStatusLabel(status: string) {
+  return ({ RUNNING: '执行中', SUCCEEDED: '已完成', FAILED: '失败', INTERRUPTED: '已中断', UNKNOWN: '结果待核实' } as Record<string, string>)[status] || status
+}
+
+function toolLabel(name: string) {
+  return ({ CartTool: '购物车操作', InventoryTool: '库存查询', ProductDetailTool: '商品查询',
+    HybridRagTool: '商品与知识检索', OrderQueryTool: '订单查询', OrderPreviewTool: '订单预览' } as Record<string, string>)[name] || name
+}
+
+async function recoverTurn(id: string) {
+  const turn = turns.value.find((item) => item.id === id)
+  if (!turn || turn.querying) return
+  updateTurn(id, { querying: true })
+  try {
+    const run = await getAgentRun(turn.request.clientRequestId)
+    applyRun(id, run)
+  } catch {
+    updateTurn(id, { status: 'error', error: '暂未查询到执行结果，请稍后再查询；重新购买前请先核对购物车或订单。' })
+  } finally {
+    updateTurn(id, { querying: false })
+  }
+}
 
 function usePrompt(prompt: string) {
   draft.message = prompt
@@ -106,8 +183,8 @@ function toggleEvidence(id: string) {
   expandedTurn.value = expandedTurn.value === id ? null : id
 }
 
-function goToOrderConfirmation() {
-  router.push('/orders')
+function goToOrderConfirmation(draftId: string) {
+  router.push({ path: '/orders', query: { draftId } })
 }
 
 function resultStatusLabel(status: AiChatResponse['resultStatus']) {
@@ -165,7 +242,12 @@ async function submit() {
     message.warning('先告诉我你想买什么手机')
     return
   }
-  const payload: AiChatRequest = { conversationId: draft.conversationId.trim(), message: text }
+  // 标识只在主动提交时生成；断线后按标识查询已保存结果。
+  const payload: AiChatRequest = {
+    clientRequestId: crypto.randomUUID(),
+    conversationId: draft.conversationId.trim(),
+    message: text,
+  }
   const id = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
   turns.value.push({
     id,
@@ -182,21 +264,19 @@ async function submit() {
 
   const controller = new AbortController()
   inFlight.value = controller
-  let rendered = false
   let terminal = false
+  let failed = false
 
   try {
     await streamAiChat(payload, {
       onTextDelta: (delta) => {
         if (!delta) return
-        rendered = true
         const current = turns.value.find((turn) => turn.id === id)
         updateTurn(id, { streamedText: (current?.streamedText || '') + delta })
         void scrollToLatest()
       },
       onReplace: (replaced) => {
         // 校验中断：已渲染的内容全部作废，整体替换
-        rendered = true
         updateTurn(id, { streamedText: replaced.message })
         void scrollToLatest()
       },
@@ -212,26 +292,20 @@ async function submit() {
       },
       onError: (error) => {
         terminal = true
+        failed = true
         updateTurn(id, { status: 'error', error: error.message, streamedText: '' })
         message.error(error.message)
       },
     }, controller.signal)
+    // EOF 不代表已完成：没有 final/error 也可能是网关截断。
+    if (!terminal || failed) await recoverTurn(id)
     await scrollToLatest()
   } catch (error) {
     if (controller.signal.aborted) {
       // 用户主动取消（新对话 / 离开页面），不算失败
       return
     }
-    if (rendered || terminal) {
-      // 已经渲染过正文才断开：不能用同步接口重发，否则同一段回复会再吐一遍
-      const errorText = error instanceof Error ? error.message : '流式连接中断'
-      updateTurn(id, { status: 'error', error: `回复中断：${errorText}` })
-      message.error('回复中断，请重新发送')
-      return
-    }
-    // 还没渲染任何正文就断开：静默降级到同步接口，只重试这一次
-    console.warn('[ai] 流式连接不可用，降级到同步接口', error)
-    await fallbackToSync(id, payload)
+    await recoverTurn(id)
   } finally {
     if (inFlight.value === controller) {
       inFlight.value = null
@@ -239,31 +313,6 @@ async function submit() {
   }
 }
 
-/** 降级：用同步 JSON 接口重发同一请求。只做一次，再失败就直接展示错误。 */
-async function fallbackToSync(id: string, payload: AiChatRequest) {
-  try {
-    const result = await sendAiChat(payload)
-    if (result.code !== 0 || !result.data) {
-      const errorText = result.message || 'AI 请求失败，请稍后再试'
-      updateTurn(id, { status: 'error', response: result.data, error: errorText })
-      message.error(errorText)
-    } else {
-      updateTurn(id, {
-        status: 'success',
-        response: result.data,
-        streamedText: result.data.message,
-        degraded: true,
-        error: null,
-      })
-    }
-  } catch (error) {
-    const errorData = isAxiosError(error) ? error.response?.data as { message?: string; data?: AiChatResponse | null } | undefined : undefined
-    const errorText = errorData?.message || (error instanceof Error ? error.message : 'AI 请求失败，请稍后再试')
-    updateTurn(id, { status: 'error', response: errorData?.data || null, error: errorText })
-    message.error(errorText)
-  }
-  await scrollToLatest()
-}
 </script>
 
 <template>
@@ -340,17 +389,39 @@ async function fallbackToSync(id: string, payload: AiChatRequest) {
                   <div class="assistant-message-wrap">
                     <div v-if="turn.status === 'sending' && !turnText(turn)" class="message-bubble assistant-bubble loading-bubble"><span></span><span></span><span></span></div>
                     <div v-else-if="turnText(turn)" class="message-bubble assistant-bubble" :class="{ 'error-bubble': turnFailed(turn) }"><div class="markdown-body" v-html="renderMarkdown(turnText(turn))"></div><span v-if="turn.status === 'sending'" class="stream-cursor"></span></div>
-                    <div v-else class="message-bubble assistant-bubble error-bubble">{{ turn.error || '这次没有拿到回复，请重新试试。' }}</div>
+                    <div v-else class="message-bubble assistant-bubble error-bubble">{{ turn.error || '尚未取得回复，请查询执行结果。' }}</div>
                     <div v-if="turn.response?.orderDraft" class="draft-action">
                       <div class="draft-action-copy">
                         <strong>订单预览已准备好</strong>
                         <span>{{ turn.response.orderDraft.items.length }} 项商品 · 预览金额 ¥{{ Number(turn.response.orderDraft.previewTotalAmount).toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</span>
                       </div>
-                      <a-button type="primary" size="small" @click="goToOrderConfirmation">
+                      <a-button type="primary" size="small" @click="goToOrderConfirmation(turn.response.orderDraft.draftId)">
                         去订单页确认 <ArrowRightOutlined />
                       </a-button>
                     </div>
-                    <div v-if="turn.response" class="message-meta"><span>{{ formatTime(turn.createdAt) }}</span><a-tag :color="turn.response.resultStatus === 'SUCCESS' ? 'green' : 'red'">{{ resultStatusLabel(turn.response.resultStatus) }}</a-tag><span v-if="turn.degraded" class="degraded-hint" title="流式连接中断，本条回复由同步接口返回">网络波动，本条回复已自动重试获取</span><a-tag v-if="turn.response.toolCalls.length" color="blue"><ThunderboltOutlined /> {{ turn.response.toolCalls.length }} 次工具调用</a-tag><a-button type="text" class="evidence-button" @click="toggleEvidence(turn.id)">{{ expandedTurn === turn.id ? '收起依据' : '查看依据' }} <DownOutlined :rotate="expandedTurn === turn.id ? 180 : 0" /></a-button></div>
+                    <div v-if="turn.status !== 'sending'" class="run-status">
+                      <a-button size="small" :loading="turn.querying" @click="recoverTurn(turn.id)">查询执行结果</a-button>
+                      <span v-if="turn.run">{{ runStatusLabel(turn.run.status) }}</span>
+                      <p v-if="turn.error">{{ turn.error }}</p>
+                      <ol v-if="turn.run?.steps.length">
+                        <li v-for="step in turn.run.steps" :key="step.sequence">
+                          {{ toolLabel(step.toolName) }}：{{ step.recovering ? '恢复中' : runStatusLabel(step.status) }}
+                          <span v-if="step.resultSource === 'BUSINESS_RECORD'">（已从业务记录核实）</span>
+                          <span v-else-if="step.resultSource === 'RECOVERY'">（原步骤恢复结果）</span>
+                          <p v-if="step.resultSummary">{{ step.resultSummary }}</p>
+                          <span v-if="step.retryCount">已尝试恢复 {{ step.retryCount }}/2 次</span>
+                          <a-popconfirm v-if="step.canRetry" :title="step.recoveryDescription" ok-text="确认按原操作重试" cancel-text="暂不重试" @confirm="retryStep(turn.id, step.sequence)">
+                            <a-button size="small" :disabled="turn.querying">恢复此步骤</a-button>
+                          </a-popconfirm>
+                          <span v-else-if="step.retryCount >= 2 && step.status !== 'SUCCEEDED' && !step.recovering">次数已用完，请人工核对</span>
+                          <details v-if="step.recoveryAttempts.length">
+                            <summary>恢复记录</summary>
+                            <p v-for="attempt in step.recoveryAttempts" :key="attempt.attempt">第 {{ attempt.attempt }} 次：{{ runStatusLabel(attempt.status) }}</p>
+                          </details>
+                        </li>
+                      </ol>
+                    </div>
+                    <div v-if="turn.response" class="message-meta"><span>{{ formatTime(turn.createdAt) }}</span><a-tag :color="turn.response.resultStatus === 'SUCCESS' ? 'green' : 'red'">{{ resultStatusLabel(turn.response.resultStatus) }}</a-tag><span v-if="turn.degraded" class="degraded-hint">已恢复保存的回复</span><a-tag v-if="turn.response.toolCalls.length" color="blue"><ThunderboltOutlined /> {{ turn.response.toolCalls.length }} 次工具调用</a-tag><a-button type="text" class="evidence-button" @click="toggleEvidence(turn.id)">{{ expandedTurn === turn.id ? '收起依据' : '查看依据' }} <DownOutlined :rotate="expandedTurn === turn.id ? 180 : 0" /></a-button></div>
                     <div v-if="expandedTurn === turn.id && turn.response" class="evidence-panel">
                       <div class="evidence-heading"><span>本次回答依据</span><small>来自实时业务数据与知识库</small></div>
                       <div v-if="turn.response.toolCalls.length" class="evidence-block"><div class="evidence-label">工具调用</div><div class="evidence-tags"><a-tag v-for="tool in turn.response.toolCalls" :key="`${turn.id}-${tool.toolName}-${tool.queriedAt}`" :color="toolColor(tool.toolName)">{{ tool.toolName }} · {{ toolStatusLabel(tool.resultStatus, tool.success) }}</a-tag></div></div>

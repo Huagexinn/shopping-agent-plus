@@ -16,6 +16,7 @@ import com.example.dto.ai.Response.AiToolCallResponse;
 import com.example.exception.BusinessException;
 import com.example.exception.UnauthorizedException;
 import com.example.service.order.OrderDraftService;
+import com.example.service.ai.AgentRunService;
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -29,7 +30,6 @@ import org.springframework.stereotype.Component;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,6 +44,9 @@ import java.util.concurrent.TimeUnit;
 public class AiOrchestrationCore {
     private static final Logger log = LoggerFactory.getLogger(AiOrchestrationCore.class);
     private static final int MAX_CHAT_MESSAGE_LENGTH = 2000;
+
+    @Resource
+    private AgentRunService agentRunService;
 
     @Resource
     private ProductDetailTool productDetailTool;
@@ -73,7 +76,8 @@ public class AiOrchestrationCore {
                            String requestId,
                            String userKey,
                            List<ConversationMessage> history,
-                           NativeToolAudit audit) {
+                           NativeToolAudit audit,
+                           AiChatResponse replay) {
     }
 
     /** 模型执行的观测值。流式下必须只取最后一个 chunk 的值，中间 chunk 的 usage 是假的 0。 */
@@ -93,16 +97,26 @@ public class AiOrchestrationCore {
     public Prepared prepare(Long userId, AiChatRequest request) {
         requireUserId(userId);
         AiChatRequest normalized = normalize(request);
-        String aiTraceId = UUID.randomUUID().toString();
+        AgentRunService.Start started = agentRunService.begin(userId, normalized);
+        String aiTraceId = started.runId();
         String userKey = AiObservabilitySupport.userKey(userId);
         String requestId = MDC.get("reqId");
         log.info("AI_MODEL_REQUEST aiTraceId={} reqId={} conversationId={} userKey={}",
                 aiTraceId, requestId, normalized.getConversationId(), userKey);
 
-        List<ConversationMessage> history = readHistory(userId, normalized.getConversationId(),
+        List<ConversationMessage> history = started.replay() != null ? List.of() : readHistory(userId, normalized.getConversationId(),
                 aiTraceId, requestId, userKey);
-        NativeToolAudit audit = new NativeToolAudit(aiTraceId, requestId, normalized.getConversationId(), userKey);
-        return new Prepared(userId, normalized, aiTraceId, requestId, userKey, history, audit);
+        NativeToolAudit audit = new NativeToolAudit(aiTraceId, requestId, normalized.getConversationId(), userKey,
+                userId, agentRunService);
+        return new Prepared(userId, normalized, aiTraceId, requestId, userKey, history, audit, started.replay());
+    }
+
+    public void interrupt(Prepared prepared) {
+        agentRunService.interrupt(prepared.userId(), prepared.aiTraceId(), "CLIENT_DISCONNECTED");
+    }
+
+    public void heartbeat(Prepared prepared) {
+        agentRunService.heartbeat(prepared.userId(), prepared.aiTraceId());
     }
 
     /**
@@ -126,7 +140,7 @@ public class AiOrchestrationCore {
         NativeToolAudit audit = prepared.audit();
         List<KnowledgeReference> knowledgeReferences = audit.knowledgeReferences();
         AiGroundingValidator.GroundingDecision grounding = AiGroundingValidator.validate(
-                rawMessage, request.getMessage(), audit.successfulResults(), knowledgeReferences);
+                rawMessage, request.getMessage(), audit.groundingResults(), knowledgeReferences);
         AiChatResultStatus resultStatus = grounding.accepted()
                 ? AiChatResultStatus.SUCCESS : AiChatResultStatus.GROUNDING_REJECTED;
         if (!grounding.accepted()) {
@@ -136,6 +150,7 @@ public class AiOrchestrationCore {
         }
         AiChatResponse response = responseAssembler.assemble(
                 request, grounding.message(), resultStatus, audit, knowledgeReferences);
+        agentRunService.finish(prepared.userId(), prepared.aiTraceId(), response);
         remember(prepared, response);
         logFinalReply(prepared, response, metrics);
         return response;
@@ -161,12 +176,14 @@ public class AiOrchestrationCore {
         AiChatResponse response = responseAssembler.assemble(prepared.request(),
                 responseAssembler.failureMessage(resultStatus), resultStatus,
                 prepared.audit(), prepared.audit().knowledgeReferences());
+        agentRunService.finish(prepared.userId(), prepared.aiTraceId(), response);
         logFinalReply(prepared, response, metrics);
         return response;
     }
 
     private ToolCallback[] callbacks(Prepared prepared) {
-        NativeToolSet toolSet = new NativeToolSet(prepared.userId(), UUID.randomUUID().toString(), prepared.audit(),
+        // 业务幂等标识与任务标识独立；重发请求在 prepare 阶段回放或拒绝。
+        NativeToolSet toolSet = new NativeToolSet(prepared.userId(), prepared.request().getClientRequestId(), prepared.audit(),
                 productDetailTool, inventoryTool,
                 cartTool, orderQueryTool, orderDraftService, hybridRagService);
         return Arrays.stream(ToolCallbacks.from(toolSet))
@@ -237,6 +254,9 @@ public class AiOrchestrationCore {
 
     private AiChatRequest normalize(AiChatRequest request) {
         if (request == null) throw new BusinessException("聊天请求不能为空");
+        String clientRequestId = request.getClientRequestId();
+        if (clientRequestId == null || clientRequestId.isBlank()) throw new BusinessException("请求标识不能为空");
+        if (!clientRequestId.matches("[A-Za-z0-9][A-Za-z0-9_-]{7,63}")) throw new BusinessException("请求标识格式不正确");
         String conversationId = StringUtils.trimToNull(request.getConversationId());
         String message = StringUtils.trimToNull(request.getMessage());
         if (conversationId == null) throw new BusinessException("会话ID不能为空");
@@ -245,6 +265,7 @@ public class AiOrchestrationCore {
         if (message.length() > MAX_CHAT_MESSAGE_LENGTH) throw new BusinessException("消息内容不能超过" + MAX_CHAT_MESSAGE_LENGTH + "个字符");
         if (message.chars().anyMatch(Character::isISOControl)) throw new BusinessException("消息内容不能包含控制字符");
         AiChatRequest normalized = new AiChatRequest();
+        normalized.setClientRequestId(clientRequestId);
         normalized.setConversationId(conversationId);
         normalized.setMessage(message);
         return normalized;
